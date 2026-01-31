@@ -1,0 +1,35 @@
+# https://EditorConfig.org
+
+# top-most EditorConfig file
+root = true
+
+[*]
+charset = utf-8
+trim_trailing_whitespace = true
+end_of_line = lf
+indent_size = 2
+indent_style = space
+insert_final_newline = true
+
+# Go
+[{go.mod,*.go}]
+indent_size = 4
+indent_style = tab
+
+# JSON
+[*.json]
+indent_size = 2
+insert_final_newline = false
+
+# YAML
+[*.{yaml,yml}]
+indent_size = 2
+
+# Markdown
+[*.md]
+indent_size = 4
+trim_trailing_whitespace = false
+
+# Docker
+[Dockerfile]
+indent_size = 4
