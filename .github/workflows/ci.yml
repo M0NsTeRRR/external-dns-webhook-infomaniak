@@ -52,7 +52,7 @@ jobs:
           go-version: ${{ matrix.go }}
 
       - name: Run tests
-        run: go test -v
+        run: go test -v ./... -race
 
   build-docker:
     name: Build docker
