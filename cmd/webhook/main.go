@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -19,7 +20,7 @@ var (
 func main() {
 	logging.Init()
 
-	slog.Info("Starting external-dns-webhook-infomaniak version %s built on %s", version, buildTime)
+	slog.Info(fmt.Sprintf("Starting external-dns-webhook-infomaniak version %s built on %s", version, buildTime))
 
 	config := config.Init()
 	provider, err := provider.Init(config)
