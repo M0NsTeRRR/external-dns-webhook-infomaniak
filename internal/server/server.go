@@ -23,11 +23,25 @@ func Init(config config.Config, webhookServer api.WebhookServer) (*http.Server, 
 	appRouter.HandleFunc("/adjustendpoints", webhookServer.AdjustEndpointsHandler)
 	appServer := createServer(fmt.Sprintf("%s:%d", config.ServerHost, config.ServerPort), appRouter, config.ServerReadTimeout, config.ServerWriteTimeout)
 
+	go func() {
+		log.Printf("starting app server on %s", appServer.Addr)
+		if err := appServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("could not listen on %s: %v\n", appServer.Addr, err)
+		}
+	}()
+
 	healthRouter := chi.NewRouter()
 	healthRouter.Get("/healthz", healthCheckHandler)
 	healthRouter.Get("/readyz", healthCheckHandler)
 	healthRouter.Get("/metrics", promhttp.Handler().ServeHTTP)
 	healthServer := createServer(fmt.Sprintf("%s:%d", config.MetricsHost, config.MetricsPort), healthRouter, config.ServerReadTimeout, config.ServerWriteTimeout)
+
+	go func() {
+		log.Printf("starting health server on %s", healthServer.Addr)
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("could not listen on %s: %v\n", healthServer.Addr, err)
+		}
+	}()
 
 	return appServer, healthServer
 }
