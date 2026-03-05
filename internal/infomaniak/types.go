@@ -1,49 +1,65 @@
 package infomaniak
 
-// InfomaniakAccount represents an Infomaniak account
-type InfomaniakAccount struct {
-	ID   int    `json:"id"`
+// InfomaniakDomain represents a domain from the v2 API
+type InfomaniakDomain struct {
 	Name string `json:"name"`
 }
 
-// InfomaniakZone represents a DNS zone
+// InfomaniakZone represents a DNS zone from the v2 API
 type InfomaniakZone struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	FQDN string `json:"fqdn"`
 }
 
-// InfomaniakRecord represents a DNS record
+// InfomaniakRecord represents a DNS record from the v2 API
 type InfomaniakRecord struct {
-	ID      int    `json:"id"`
-	ZoneID  int    `json:"zone_id"`
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Content string `json:"content"`
-	TTL     int    `json:"ttl"`
-	Pri     int    `json:"pri"`
+	ID       int    `json:"id"`
+	Source   string `json:"source"`
+	Type     string `json:"type"`
+	TTL      int    `json:"ttl"`
+	Target   string `json:"target"`
+	Priority int    `json:"priority,omitempty"`
 }
 
-// APIResponse represents a generic API response
+// APIResponse represents a generic v2 API response
 type APIResponse struct {
-	Data  interface{} `json:"data"`
-	Error string      `json:"error"`
+	Result string      `json:"result"`
+	Data   interface{} `json:"data"`
+	Error  interface{} `json:"error"`
 }
 
-// AccountListResponse represents the response for the accounts list
-type AccountListResponse struct {
-	Data  []InfomaniakAccount `json:"data"`
-	Error string              `json:"error"`
+// DomainListResponse represents the response for domains list v2
+type DomainListResponse struct {
+	Result string             `json:"result"`
+	Data   []InfomaniakDomain `json:"data"`
+	Error  interface{}        `json:"error"`
 }
 
-// ZoneListResponse represents the response for the zones list
+// ZoneListResponse represents the response for zones list v2
 type ZoneListResponse struct {
-	Data  []InfomaniakZone `json:"data"`
-	Error string           `json:"error"`
+	Result string           `json:"result"`
+	Data   []InfomaniakZone `json:"data"`
+	Error  interface{}      `json:"error"`
 }
 
-// RecordListResponse represents the response for the records list
+// RecordListResponse represents the response for records list v2
 type RecordListResponse struct {
-	Data  []InfomaniakRecord `json:"data"`
-	Error string             `json:"error"`
+	Result string             `json:"result"`
+	Data   []InfomaniakRecord `json:"data"`
+	Error  interface{}        `json:"error"`
+}
+
+// RecordCreateResponse represents the response when creating a record
+type RecordCreateResponse struct {
+	Result string           `json:"result"`
+	Data   InfomaniakRecord `json:"data"`
+	Error  interface{}      `json:"error"`
+}
+
+// RecordRequest represents the request body for creating/updating a record
+type RecordRequest struct {
+	Source   string `json:"source"`
+	Type     string `json:"type"`
+	Target   string `json:"target"`
+	TTL      int    `json:"ttl"`
+	Priority int    `json:"priority,omitempty"`
 }

@@ -50,9 +50,7 @@ func (c *InfomaniakClient) doRequest(ctx context.Context, method, endpoint strin
 	req.Header.Set("Authorization", "Bearer "+c.config.APIToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	if c.config.Debug {
-		slog.Debug(fmt.Sprintf("Request: %s %s", method, url))
-	}
+	slog.Debug(fmt.Sprintf("Request: %s %s", method, url))
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -60,39 +58,45 @@ func (c *InfomaniakClient) doRequest(ctx context.Context, method, endpoint strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	return io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	return responseBody, nil
 }
 
-// GetAccounts retrieves the list of Infomaniak accounts with context support
-func (c *InfomaniakClient) GetAccounts(ctx context.Context) ([]InfomaniakAccount, error) {
-	body, err := c.doRequest(ctx, "GET", "/1/account", nil)
+// GetDomains retrieves the list of domains using v2 API
+// GET /2/domains/domains
+func (c *InfomaniakClient) GetDomains(ctx context.Context) ([]InfomaniakDomain, error) {
+	body, err := c.doRequest(ctx, "GET", "/2/domains/domains", nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get accounts: %w", err)
+		return nil, fmt.Errorf("failed to get domains: %w", err)
 	}
 
-	var response AccountListResponse
+	var response DomainListResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal accounts response: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal domains response: %w", err)
 	}
 
-	if response.Error != "" {
-		return nil, fmt.Errorf("API error: %s", response.Error)
+	if response.Result != "success" {
+		return nil, fmt.Errorf("API error: %v", response.Error)
 	}
 
 	return response.Data, nil
 }
 
-// GetZones retrieves the list of DNS zones for a given account with context support
-func (c *InfomaniakClient) GetZones(ctx context.Context, accountID int) ([]InfomaniakZone, error) {
-	endpoint := fmt.Sprintf("/1/domain/%d/zone", accountID)
+// GetDomainZones retrieves the list of DNS zones for a given domain using v2 API
+// GET /2/domains/domains/{domain}/zones
+func (c *InfomaniakClient) GetDomainZones(ctx context.Context, domainName string) ([]InfomaniakZone, error) {
+	endpoint := fmt.Sprintf("/2/domains/domains/%s/zones", domainName)
 	body, err := c.doRequest(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get zones for account %d: %w", accountID, err)
+		return nil, fmt.Errorf("failed to get zones for domain %s: %w", domainName, err)
 	}
 
 	var response ZoneListResponse
@@ -100,19 +104,20 @@ func (c *InfomaniakClient) GetZones(ctx context.Context, accountID int) ([]Infom
 		return nil, fmt.Errorf("failed to unmarshal zones response: %w", err)
 	}
 
-	if response.Error != "" {
-		return nil, fmt.Errorf("API error: %s", response.Error)
+	if response.Result != "success" {
+		return nil, fmt.Errorf("API error: %v", response.Error)
 	}
 
 	return response.Data, nil
 }
 
-// GetRecords retrieves the list of DNS records for a given zone with context support
-func (c *InfomaniakClient) GetRecords(ctx context.Context, zoneID int) ([]InfomaniakRecord, error) {
-	endpoint := fmt.Sprintf("/1/domain/zone/%d/record", zoneID)
+// GetRecords retrieves the list of DNS records for a given zone using v2 API
+// GET /2/zones/{zone}/records
+func (c *InfomaniakClient) GetRecords(ctx context.Context, zoneFQDN string) ([]InfomaniakRecord, error) {
+	endpoint := fmt.Sprintf("/2/zones/%s/records", zoneFQDN)
 	body, err := c.doRequest(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get records for zone %d: %w", zoneID, err)
+		return nil, fmt.Errorf("failed to get records for zone %s: %w", zoneFQDN, err)
 	}
 
 	var response RecordListResponse
@@ -120,9 +125,72 @@ func (c *InfomaniakClient) GetRecords(ctx context.Context, zoneID int) ([]Infoma
 		return nil, fmt.Errorf("failed to unmarshal records response: %w", err)
 	}
 
-	if response.Error != "" {
-		return nil, fmt.Errorf("API error: %s", response.Error)
+	if response.Result != "success" {
+		return nil, fmt.Errorf("API error: %v", response.Error)
 	}
 
 	return response.Data, nil
+}
+
+// CreateRecord creates a new DNS record in a zone
+// POST /2/zones/{zone}/records
+func (c *InfomaniakClient) CreateRecord(ctx context.Context, zoneFQDN string, record RecordRequest) (*InfomaniakRecord, error) {
+	endpoint := fmt.Sprintf("/2/zones/%s/records", zoneFQDN)
+	body, err := c.doRequest(ctx, "POST", endpoint, record)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create record: %w", err)
+	}
+
+	var response RecordCreateResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal create response: %w", err)
+	}
+
+	if response.Result != "success" {
+		return nil, fmt.Errorf("API error: %v", response.Error)
+	}
+
+	return &response.Data, nil
+}
+
+// UpdateRecord updates an existing DNS record
+// PUT /2/zones/{zone}/records/{record}
+func (c *InfomaniakClient) UpdateRecord(ctx context.Context, zoneFQDN string, recordID int, record RecordRequest) (*InfomaniakRecord, error) {
+	endpoint := fmt.Sprintf("/2/zones/%s/records/%d", zoneFQDN, recordID)
+	body, err := c.doRequest(ctx, "PUT", endpoint, record)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update record: %w", err)
+	}
+
+	var response RecordCreateResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal update response: %w", err)
+	}
+
+	if response.Result != "success" {
+		return nil, fmt.Errorf("API error: %v", response.Error)
+	}
+
+	return &response.Data, nil
+}
+
+// DeleteRecord deletes a DNS record
+// DELETE /2/zones/{zone}/records/{record}
+func (c *InfomaniakClient) DeleteRecord(ctx context.Context, zoneFQDN string, recordID int) error {
+	endpoint := fmt.Sprintf("/2/zones/%s/records/%d", zoneFQDN, recordID)
+	body, err := c.doRequest(ctx, "DELETE", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("failed to delete record: %w", err)
+	}
+
+	var response APIResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("failed to unmarshal delete response: %w", err)
+	}
+
+	if response.Result != "success" {
+		return fmt.Errorf("API error: %v", response.Error)
+	}
+
+	return nil
 }

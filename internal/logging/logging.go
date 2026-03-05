@@ -7,38 +7,39 @@ import (
 )
 
 func Init() {
-	setLogFormat()
-	setLogLevel()
+	level := getLogLevel()
+	setLogFormat(level)
 }
 
-func setLogFormat() {
-	format := os.Getenv("LOG_FORMAT")
-
-	switch strings.ToLower(format) {
-	case "text", "":
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	case "json":
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
-	default:
-		slog.Warn("unknown log format, using TEXT")
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	}
-}
-
-func setLogLevel() {
+func getLogLevel() slog.Level {
 	level := os.Getenv("LOG_LEVEL")
 
 	switch strings.ToLower(level) {
 	case "debug":
-		slog.SetLogLoggerLevel(slog.LevelDebug)
+		return slog.LevelDebug
 	case "info", "":
-		slog.SetLogLoggerLevel(slog.LevelInfo)
+		return slog.LevelInfo
 	case "warn":
-		slog.SetLogLoggerLevel(slog.LevelWarn)
+		return slog.LevelWarn
 	case "error":
-		slog.SetLogLoggerLevel(slog.LevelError)
+		return slog.LevelError
 	default:
-		slog.Warn("unknown log level, using INFO")
-		slog.SetLogLoggerLevel(slog.LevelInfo)
+		return slog.LevelInfo
+	}
+}
+
+func setLogFormat(level slog.Level) {
+	format := os.Getenv("LOG_FORMAT")
+	opts := &slog.HandlerOptions{
+		Level: level,
+	}
+
+	switch strings.ToLower(format) {
+	case "text", "":
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, opts)))
+	case "json":
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, opts)))
+	default:
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, opts)))
 	}
 }

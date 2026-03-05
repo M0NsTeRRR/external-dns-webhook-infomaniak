@@ -13,11 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestInfomaniakClient_NewInfomaniakClient tests the client initialization
 func TestInfomaniakClient_NewInfomaniakClient(t *testing.T) {
 	config := &Config{
 		APIToken: "test-token",
-		Debug:    true,
 		DryRun:   false,
 	}
 
@@ -26,20 +24,20 @@ func TestInfomaniakClient_NewInfomaniakClient(t *testing.T) {
 	assert.NotNil(t, client)
 	assert.Equal(t, config, client.config)
 	assert.NotNil(t, client.client)
+	assert.Equal(t, "https://api.infomaniak.com", client.baseURL)
 }
 
-// TestInfomaniakClient_GetAccounts tests the GetAccounts method
-func TestInfomaniakClient_GetAccounts(t *testing.T) {
-	// Setup test server
+func TestInfomaniakClient_GetDomains(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/1/account", r.URL.Path)
+		assert.Equal(t, "/2/domains/domains", r.URL.Path)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
-		response := AccountListResponse{
-			Data: []InfomaniakAccount{
-				{ID: 1, Name: "Test Account 1"},
-				{ID: 2, Name: "Test Account 2"},
+		response := DomainListResponse{
+			Result: "success",
+			Data: []InfomaniakDomain{
+				{Name: "example.com"},
+				{Name: "test.com"},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -47,38 +45,28 @@ func TestInfomaniakClient_GetAccounts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create client with test configuration
-	config := &Config{
-		APIToken: "test-token",
-		Debug:    false,
-		DryRun:   false,
-	}
+	config := &Config{APIToken: "test-token", DryRun: false}
 	client := NewInfomaniakClient(config)
 	client.baseURL = server.URL
 
-	// Test the method
-	accounts, err := client.GetAccounts(context.Background())
+	domains, err := client.GetDomains(context.Background())
 
 	require.NoError(t, err)
-	assert.Len(t, accounts, 2)
-	assert.Equal(t, 1, accounts[0].ID)
-	assert.Equal(t, "Test Account 1", accounts[0].Name)
-	assert.Equal(t, 2, accounts[1].ID)
-	assert.Equal(t, "Test Account 2", accounts[1].Name)
+	assert.Len(t, domains, 2)
+	assert.Equal(t, "example.com", domains[0].Name)
+	assert.Equal(t, "test.com", domains[1].Name)
 }
 
-// TestInfomaniakClient_GetZones tests the GetZones method
-func TestInfomaniakClient_GetZones(t *testing.T) {
-	// Setup test server
+func TestInfomaniakClient_GetDomainZones(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/1/domain/1/zone", r.URL.Path)
+		assert.Equal(t, "/2/domains/domains/example.com/zones", r.URL.Path)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 		response := ZoneListResponse{
+			Result: "success",
 			Data: []InfomaniakZone{
-				{ID: 101, Name: "example.com", Status: "active"},
-				{ID: 102, Name: "test.com", Status: "active"},
+				{FQDN: "example.com"},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -86,54 +74,28 @@ func TestInfomaniakClient_GetZones(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create client with test configuration
-	config := &Config{
-		APIToken: "test-token",
-		Debug:    false,
-		DryRun:   false,
-	}
+	config := &Config{APIToken: "test-token", DryRun: false}
 	client := NewInfomaniakClient(config)
 	client.baseURL = server.URL
 
-	// Test the method
-	zones, err := client.GetZones(context.Background(), 1)
+	zones, err := client.GetDomainZones(context.Background(), "example.com")
 
 	require.NoError(t, err)
-	assert.Len(t, zones, 2)
-	assert.Equal(t, 101, zones[0].ID)
-	assert.Equal(t, "example.com", zones[0].Name)
-	assert.Equal(t, 102, zones[1].ID)
-	assert.Equal(t, "test.com", zones[1].Name)
+	assert.Len(t, zones, 1)
+	assert.Equal(t, "example.com", zones[0].FQDN)
 }
 
-// TestInfomaniakClient_GetRecords tests the GetRecords method
 func TestInfomaniakClient_GetRecords(t *testing.T) {
-	// Setup test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/1/domain/zone/101/record", r.URL.Path)
+		assert.Equal(t, "/2/zones/example.com/records", r.URL.Path)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 		response := RecordListResponse{
+			Result: "success",
 			Data: []InfomaniakRecord{
-				{
-					ID:      1001,
-					ZoneID:  101,
-					Name:    "@",
-					Type:    "A",
-					Content: "192.0.2.1",
-					TTL:     3600,
-					Pri:     0,
-				},
-				{
-					ID:      1002,
-					ZoneID:  101,
-					Name:    "www",
-					Type:    "CNAME",
-					Content: "example.com",
-					TTL:     1800,
-					Pri:     0,
-				},
+				{ID: 1001, Source: "@", Type: "A", Target: "192.0.2.1", TTL: 3600},
+				{ID: 1002, Source: "www", Type: "CNAME", Target: "example.com", TTL: 1800},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -141,44 +103,143 @@ func TestInfomaniakClient_GetRecords(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create client with test configuration
-	config := &Config{
-		APIToken: "test-token",
-		Debug:    false,
-		DryRun:   false,
-	}
+	config := &Config{APIToken: "test-token", DryRun: false}
 	client := NewInfomaniakClient(config)
 	client.baseURL = server.URL
 
-	// Test the method
-	records, err := client.GetRecords(context.Background(), 101)
+	records, err := client.GetRecords(context.Background(), "example.com")
 
 	require.NoError(t, err)
 	assert.Len(t, records, 2)
 	assert.Equal(t, 1001, records[0].ID)
-	assert.Equal(t, "@", records[0].Name)
+	assert.Equal(t, "@", records[0].Source)
 	assert.Equal(t, "A", records[0].Type)
-	assert.Equal(t, "192.0.2.1", records[0].Content)
+	assert.Equal(t, "192.0.2.1", records[0].Target)
 	assert.Equal(t, 1002, records[1].ID)
-	assert.Equal(t, "www", records[1].Name)
+	assert.Equal(t, "www", records[1].Source)
 	assert.Equal(t, "CNAME", records[1].Type)
-	assert.Equal(t, "example.com", records[1].Content)
 }
 
-// TestInfomaniakClient_doRequest tests the doRequest method
+func TestInfomaniakClient_CreateRecord(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/2/zones/example.com/records", r.URL.Path)
+		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		var req RecordRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "test", req.Source)
+		assert.Equal(t, "A", req.Type)
+		assert.Equal(t, "192.0.2.10", req.Target)
+		assert.Equal(t, 3600, req.TTL)
+
+		response := RecordCreateResponse{
+			Result: "success",
+			Data: InfomaniakRecord{
+				ID:     1003,
+				Source: req.Source,
+				Type:   req.Type,
+				Target: req.Target,
+				TTL:    req.TTL,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+
+	record, err := client.CreateRecord(context.Background(), "example.com", RecordRequest{
+		Source: "test",
+		Type:   "A",
+		Target: "192.0.2.10",
+		TTL:    3600,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1003, record.ID)
+	assert.Equal(t, "test", record.Source)
+	assert.Equal(t, "A", record.Type)
+	assert.Equal(t, "192.0.2.10", record.Target)
+}
+
+func TestInfomaniakClient_UpdateRecord(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "PUT", r.Method)
+		assert.Equal(t, "/2/zones/example.com/records/1001", r.URL.Path)
+		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+
+		var req RecordRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, "test", req.Source)
+		assert.Equal(t, "A", req.Type)
+		assert.Equal(t, "192.0.2.20", req.Target)
+
+		response := RecordCreateResponse{
+			Result: "success",
+			Data: InfomaniakRecord{
+				ID:     1001,
+				Source: req.Source,
+				Type:   req.Type,
+				Target: req.Target,
+				TTL:    req.TTL,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+
+	record, err := client.UpdateRecord(context.Background(), "example.com", 1001, RecordRequest{
+		Source: "test",
+		Type:   "A",
+		Target: "192.0.2.20",
+		TTL:    3600,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1001, record.ID)
+	assert.Equal(t, "192.0.2.20", record.Target)
+}
+
+func TestInfomaniakClient_DeleteRecord(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "DELETE", r.Method)
+		assert.Equal(t, "/2/zones/example.com/records/1001", r.URL.Path)
+		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+
+		response := APIResponse{Result: "success", Data: nil}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+
+	err := client.DeleteRecord(context.Background(), "example.com", 1001)
+
+	require.NoError(t, err)
+}
+
 func TestInfomaniakClient_doRequest(t *testing.T) {
 	t.Run("successful request", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"data": "test", "error": ""}`)
+			fmt.Fprintf(w, `{"result": "success", "data": "test"}`)
 		}))
 		defer server.Close()
 
-		config := &Config{
-			APIToken: "test-token",
-			Debug:    false,
-			DryRun:   false,
-		}
+		config := &Config{APIToken: "test-token", DryRun: false}
 		client := NewInfomaniakClient(config)
 		client.client = server.Client()
 		client.baseURL = server.URL
@@ -196,11 +257,7 @@ func TestInfomaniakClient_doRequest(t *testing.T) {
 		}))
 		defer server.Close()
 
-		config := &Config{
-			APIToken: "test-token",
-			Debug:    false,
-			DryRun:   false,
-		}
+		config := &Config{APIToken: "test-token", DryRun: false}
 		client := NewInfomaniakClient(config)
 		client.client = server.Client()
 		client.baseURL = server.URL
@@ -213,22 +270,17 @@ func TestInfomaniakClient_doRequest(t *testing.T) {
 
 	t.Run("context cancellation", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Simulate a slow response
 			select {
 			case <-r.Context().Done():
 				w.WriteHeader(http.StatusRequestTimeout)
 			case <-time.After(1 * time.Second):
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"data": "test"}`)
+				fmt.Fprintf(w, `{"result": "success", "data": "test"}`)
 			}
 		}))
 		defer server.Close()
 
-		config := &Config{
-			APIToken: "test-token",
-			Debug:    false,
-			DryRun:   false,
-		}
+		config := &Config{APIToken: "test-token", DryRun: false}
 		client := NewInfomaniakClient(config)
 		client.client = server.Client()
 		client.baseURL = server.URL
@@ -243,49 +295,40 @@ func TestInfomaniakClient_doRequest(t *testing.T) {
 	})
 }
 
-// TestInfomaniakClient_ErrorHandling tests error handling
 func TestInfomaniakClient_ErrorHandling(t *testing.T) {
 	t.Run("API error response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"data": null, "error": "authentication failed"}`)
+			fmt.Fprintf(w, `{"result": "error", "data": null, "error": "authentication failed"}`)
 		}))
 		defer server.Close()
 
-		config := &Config{
-			APIToken: "test-token",
-			Debug:    false,
-			DryRun:   false,
-		}
+		config := &Config{APIToken: "test-token", DryRun: false}
 		client := NewInfomaniakClient(config)
 		client.client = server.Client()
 		client.baseURL = server.URL
 
-		_, err := client.GetAccounts(context.Background())
+		_, err := client.GetRecords(context.Background(), "example.com")
 
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "API error: authentication failed")
+		assert.Contains(t, err.Error(), "API error")
 	})
 
 	t.Run("invalid JSON response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"data": [, "error": ""}`) // Invalid JSON
+			fmt.Fprintf(w, `{"data": [, "error": ""}`)
 		}))
 		defer server.Close()
 
-		config := &Config{
-			APIToken: "test-token",
-			Debug:    false,
-			DryRun:   false,
-		}
+		config := &Config{APIToken: "test-token", DryRun: false}
 		client := NewInfomaniakClient(config)
 		client.client = server.Client()
 		client.baseURL = server.URL
 
-		_, err := client.GetAccounts(context.Background())
+		_, err := client.GetRecords(context.Background(), "example.com")
 
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal accounts response")
+		assert.Contains(t, err.Error(), "failed to unmarshal records response")
 	})
 }

@@ -12,16 +12,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/m0nsterrr/external-dns-webhook-infomaniak/internal/config"
+	"github.com/m0nsterrr/external-dns-webhook-infomaniak/internal/webhook"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/external-dns/provider/webhook/api"
 )
 
-func Init(config config.Config, webhookServer api.WebhookServer) (*http.Server, *http.Server) {
+func Init(cfg config.Config, webhookServer api.WebhookServer) (*http.Server, *http.Server) {
+	wh := webhook.New(webhookServer.Provider)
+
 	appRouter := chi.NewRouter()
-	appRouter.HandleFunc("/", webhookServer.NegotiateHandler)
-	appRouter.HandleFunc("/records", webhookServer.RecordsHandler)
-	appRouter.HandleFunc("/adjustendpoints", webhookServer.AdjustEndpointsHandler)
-	appServer := createServer(fmt.Sprintf("%s:%d", config.ServerHost, config.ServerPort), appRouter, config.ServerReadTimeout, config.ServerWriteTimeout)
+	appRouter.Get("/", wh.Negotiate)
+	appRouter.Get("/records", wh.Records)
+	appRouter.Post("/records", wh.ApplyChanges)
+	appRouter.Post("/adjustendpoints", wh.AdjustEndpoints)
+	appServer := createServer(fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort), appRouter, cfg.ServerReadTimeout, cfg.ServerWriteTimeout)
 
 	go func() {
 		log.Printf("starting app server on %s", appServer.Addr)
@@ -34,7 +38,7 @@ func Init(config config.Config, webhookServer api.WebhookServer) (*http.Server, 
 	healthRouter.Get("/healthz", healthCheckHandler)
 	healthRouter.Get("/readyz", healthCheckHandler)
 	healthRouter.Get("/metrics", promhttp.Handler().ServeHTTP)
-	healthServer := createServer(fmt.Sprintf("%s:%d", config.MetricsHost, config.MetricsPort), healthRouter, config.ServerReadTimeout, config.ServerWriteTimeout)
+	healthServer := createServer(fmt.Sprintf("%s:%d", cfg.MetricsHost, cfg.MetricsPort), healthRouter, cfg.ServerReadTimeout, cfg.ServerWriteTimeout)
 
 	go func() {
 		log.Printf("starting health server on %s", healthServer.Addr)
@@ -52,8 +56,7 @@ func createServer(addr string, handler http.Handler, readTimeout, writeTimeout t
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	_, err := w.Write([]byte("OK"))
-	if err != nil {
+	if _, err := w.Write([]byte("OK")); err != nil {
 		log.Printf("error writing response: %v", err)
 	}
 }

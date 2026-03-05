@@ -11,6 +11,9 @@ import (
 	"sigs.k8s.io/external-dns/provider"
 )
 
+// Infomaniak requires a minimum TTL of 60 seconds
+const minTTL = 60
+
 // Provider implements the DNS provider for Infomaniak DNS.
 type Provider struct {
 	provider.BaseProvider
@@ -19,11 +22,11 @@ type Provider struct {
 	domainFilter endpoint.DomainFilterInterface
 }
 
-func NewInfomaniakProvider(domanfilter endpoint.DomainFilterInterface, configuration *Config) *Provider {
+func NewInfomaniakProvider(domainFilter endpoint.DomainFilterInterface, configuration *Config) *Provider {
 	return &Provider{
 		client:       NewInfomaniakClient(configuration),
 		dryRun:       configuration.DryRun,
-		domainFilter: domanfilter,
+		domainFilter: domainFilter,
 	}
 }
 
@@ -31,50 +34,48 @@ func NewInfomaniakProvider(domanfilter endpoint.DomainFilterInterface, configura
 func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 	var endpoints []*endpoint.Endpoint
 
-	// Get all accounts
-	accounts, err := p.client.GetAccounts(ctx)
+	// Get all domains
+	domains, err := p.client.GetDomains(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get accounts: %w", err)
+		return nil, fmt.Errorf("failed to get domains: %w", err)
 	}
 
-	// For each account, get zones and records
-	for _, account := range accounts {
-		zones, err := p.client.GetZones(ctx, account.ID)
+	slog.Debug(fmt.Sprintf("Found %d domains", len(domains)))
+
+	// For each domain, get zones and records
+	for _, domain := range domains {
+		// Apply domain filter if specified
+		if p.domainFilter != nil && !p.domainFilter.Match(domain.Name) {
+			slog.Debug(fmt.Sprintf("Skipping domain %s due to domain filter", domain.Name))
+			continue
+		}
+
+		// Get zones for this domain
+		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Failed to get zones for account %d: %v", account.ID, err))
+			slog.Warn(fmt.Sprintf("Failed to get zones for domain %s: %v", domain.Name, err))
 			continue
 		}
 
 		for _, zone := range zones {
-			// Apply domain filter if specified
-			if p.domainFilter != nil && !p.domainFilter.Match(zone.Name) {
-				slog.Debug(fmt.Sprintf("Skipping zone %s due to domain filter", zone.Name))
+			// Get records for this zone
+			records, err := p.client.GetRecords(ctx, zone.FQDN)
+			if err != nil {
+				slog.Warn(fmt.Sprintf("Failed to get records for zone %s: %v", zone.FQDN, err))
 				continue
 			}
 
-			records, err := p.client.GetRecords(ctx, zone.ID)
-			if err != nil {
-				slog.Warn(fmt.Sprintf("Failed to get records for zone %d (%s): %v", zone.ID, zone.Name, err))
-				continue
-			}
+			slog.Debug(fmt.Sprintf("Found %d records for zone %s", len(records), zone.FQDN))
 
 			for _, record := range records {
-				// Skip root records (@) and convert to proper endpoint format
-				if record.Name == "@" {
-					record.Name = zone.Name
-				} else if !strings.HasSuffix(record.Name, "."+zone.Name) {
-					record.Name = fmt.Sprintf("%s.%s", record.Name, zone.Name)
-				}
-
 				// Convert record to endpoint
-				if ep := recordToEndpoint(record, zone.Name); ep != nil {
+				if ep := recordToEndpoint(record, zone.FQDN); ep != nil {
 					endpoints = append(endpoints, ep)
 				}
 			}
 		}
 	}
 
-	slog.Debug(fmt.Sprintf("Records() found %d endpoints", len(endpoints)))
 	return endpoints, nil
 }
 
@@ -85,25 +86,27 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 		return p.printChanges(changes)
 	}
 
+	slog.Info(fmt.Sprintf("requesting apply changes, create: %d, updateOld: %d, updateNew: %d, delete: %d", len(changes.Create), len(changes.UpdateOld), len(changes.UpdateNew), len(changes.Delete)))
+
 	// Process deletions first
-	for _, endpoint := range changes.Delete {
-		if err := p.deleteRecord(ctx, endpoint); err != nil {
-			return fmt.Errorf("failed to delete record %s: %w", endpoint.DNSName, err)
+	for _, ep := range changes.Delete {
+		if err := p.deleteRecord(ctx, ep); err != nil {
+			return fmt.Errorf("failed to delete record %s: %w", ep.DNSName, err)
 		}
 	}
 
 	// Process creations
-	for _, endpoint := range changes.Create {
-		if err := p.createRecord(ctx, endpoint); err != nil {
-			return fmt.Errorf("failed to create record %s: %w", endpoint.DNSName, err)
+	for _, ep := range changes.Create {
+		if err := p.createRecord(ctx, ep); err != nil {
+			return fmt.Errorf("failed to create record %s: %w", ep.DNSName, err)
 		}
 	}
 
 	// Process updates
-	for i, endpoint := range changes.UpdateOld {
+	for i, oldEp := range changes.UpdateOld {
 		if i < len(changes.UpdateNew) {
-			if err := p.updateRecord(ctx, endpoint, changes.UpdateNew[i]); err != nil {
-				return fmt.Errorf("failed to update record %s: %w", endpoint.DNSName, err)
+			if err := p.updateRecord(ctx, oldEp, changes.UpdateNew[i]); err != nil {
+				return fmt.Errorf("failed to update record %s: %w", oldEp.DNSName, err)
 			}
 		}
 	}
@@ -115,161 +118,200 @@ func (p *Provider) GetDomainFilter() endpoint.DomainFilterInterface {
 	return p.domainFilter
 }
 
+// AdjustEndpoints normalizes endpoints before ExternalDNS computes the diff.
+func (p *Provider) AdjustEndpoints(endpoints []*endpoint.Endpoint) ([]*endpoint.Endpoint, error) {
+	for _, ep := range endpoints {
+		// Infomaniak enforces a minimum TTL of 60 seconds, so any lower value is raised here.
+		if ep.RecordTTL < minTTL {
+			slog.Warn(fmt.Sprintf("TTL %d for %s is below Infomaniak minimum (%d), raising to %d", ep.RecordTTL, ep.DNSName, minTTL, minTTL))
+			ep.RecordTTL = minTTL
+		}
+	}
+	return endpoints, nil
+}
+
 // recordToEndpoint converts an Infomaniak record to an ExternalDNS endpoint.
-func recordToEndpoint(r InfomaniakRecord, zoneName string) *endpoint.Endpoint {
-	return endpoint.NewEndpointWithTTL(ensureFQDN(r.Name, zoneName), r.Type, endpoint.TTL(r.TTL), r.Content)
+func recordToEndpoint(r InfomaniakRecord, zoneFQDN string) *endpoint.Endpoint {
+	dnsName := ensureFQDN(r.Source, zoneFQDN)
+	// Normalize TTL to match what we send to the API
+	ttl := max(r.TTL, minTTL)
+	return endpoint.NewEndpointWithTTL(dnsName, r.Type, endpoint.TTL(ttl), r.Target)
 }
 
 // ensureFQDN ensures the record name is a fully qualified domain name.
-func ensureFQDN(name, zoneName string) string {
-	if name == "@" || name == zoneName {
-		return zoneName
+func ensureFQDN(source, zoneFQDN string) string {
+	// Infomaniak uses "." for root records
+	if source == "." {
+		return zoneFQDN
 	}
 
-	if strings.HasSuffix(name, "."+zoneName) {
-		return name
-	}
-
-	return fmt.Sprintf("%s.%s", name, zoneName)
+	return fmt.Sprintf("%s.%s", source, zoneFQDN)
 }
 
-// extractZoneIDAndRecordName extracts the zone ID and record name from an endpoint.
-func (p *Provider) extractZoneIDAndRecordName(ctx context.Context, ep *endpoint.Endpoint) (int, string, error) {
-	// Get all zones to find the matching one
-	accounts, err := p.client.GetAccounts(ctx)
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to get accounts: %w", err)
+// extractRecordSource extracts the record source (subdomain) from a full DNS name
+// Returns "." for root records as expected by Infomaniak API
+func extractRecordSource(dnsName, zoneFQDN string) string {
+	if dnsName == zoneFQDN {
+		return "."
 	}
 
-	for _, account := range accounts {
-		zones, err := p.client.GetZones(ctx, account.ID)
+	if strings.HasSuffix(dnsName, "."+zoneFQDN) {
+		return strings.TrimSuffix(dnsName, "."+zoneFQDN)
+	}
+
+	return dnsName
+}
+
+// findZoneForEndpoint finds the zone FQDN that matches the given endpoint
+func (p *Provider) findZoneForEndpoint(ctx context.Context, ep *endpoint.Endpoint) (string, error) {
+	domains, err := p.client.GetDomains(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get domains: %w", err)
+	}
+
+	var bestMatch string
+	for _, domain := range domains {
+		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
+			slog.Warn(fmt.Sprintf("Failed to get zones for domain %s: %v", domain.Name, err))
 			continue
 		}
 
 		for _, zone := range zones {
-			if strings.HasSuffix(ep.DNSName, "."+zone.Name) || ep.DNSName == zone.Name {
-				// Found the matching zone
-				recordName := ep.DNSName
-				if recordName == zone.Name {
-					recordName = "@"
-				} else if strings.HasSuffix(recordName, "."+zone.Name) {
-					recordName = strings.TrimSuffix(recordName, "."+zone.Name)
+			if ep.DNSName == zone.FQDN || strings.HasSuffix(ep.DNSName, "."+zone.FQDN) {
+				if len(zone.FQDN) > len(bestMatch) {
+					bestMatch = zone.FQDN
 				}
-				return zone.ID, recordName, nil
 			}
 		}
 	}
 
-	return 0, "", fmt.Errorf("no matching zone found for endpoint %s", ep.DNSName)
+	if bestMatch == "" {
+		return "", fmt.Errorf("no matching zone found for endpoint %s", ep.DNSName)
+	}
+
+	return bestMatch, nil
+}
+
+// findRecord finds an existing record matching the endpoint
+func (p *Provider) findRecord(ctx context.Context, zoneFQDN string, source, recordType string) (*InfomaniakRecord, error) {
+	records, err := p.client.GetRecords(ctx, zoneFQDN)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, record := range records {
+		if record.Source == source && record.Type == recordType {
+			return &record, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // createRecord creates a new DNS record.
 func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) error {
-	zoneID, recordName, err := p.extractZoneIDAndRecordName(ctx, ep)
+	zoneFQDN, err := p.findZoneForEndpoint(ctx, ep)
 	if err != nil {
-		return fmt.Errorf("failed to extract zone info: %w", err)
+		return fmt.Errorf("failed to find zone: %w", err)
 	}
 
-	// Prepare the record data for Infomaniak API
-	recordData := map[string]interface{}{
-		"name":    recordName,
-		"type":    ep.RecordType,
-		"content": ep.Targets[0],
-		"ttl":     int(ep.RecordTTL),
+	source := extractRecordSource(ep.DNSName, zoneFQDN)
+
+	for _, target := range ep.Targets {
+		record := RecordRequest{
+			Source: source,
+			Type:   ep.RecordType,
+			Target: target,
+			TTL:    max(int(ep.RecordTTL), minTTL),
+		}
+
+		// Set priority for MX and SRV records
+		if ep.RecordType == "MX" || ep.RecordType == "SRV" {
+			record.Priority = 10
+		}
+
+		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
+		if err != nil {
+			return fmt.Errorf("failed to create record: %w", err)
+		}
+
+		slog.Info(fmt.Sprintf("Created record %s %s %s", source, ep.RecordType, target))
 	}
 
-	if ep.RecordType == "MX" || ep.RecordType == "SRV" {
-		// For MX and SRV records, we might need priority
-		// This would need to be extracted from the target format
-		recordData["pri"] = 10
-	}
-
-	endpoint := fmt.Sprintf("/1/domain/zone/%d/record", zoneID)
-	_, err = p.client.doRequest(ctx, "POST", endpoint, recordData)
-	if err != nil {
-		return fmt.Errorf("failed to create record: %w", err)
-	}
-
-	slog.Info(fmt.Sprintf("Created record %s %s -> %s", recordName, ep.RecordType, ep.Targets[0]))
 	return nil
 }
 
 // updateRecord updates an existing DNS record.
 func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endpoint) error {
-	zoneID, recordName, err := p.extractZoneIDAndRecordName(ctx, oldEp)
+	zoneFQDN, err := p.findZoneForEndpoint(ctx, oldEp)
 	if err != nil {
-		return fmt.Errorf("failed to extract zone info: %w", err)
+		return fmt.Errorf("failed to find zone: %w", err)
 	}
 
-	// First, we need to find the record ID
-	existingRecords, err := p.client.GetRecords(ctx, zoneID)
+	source := extractRecordSource(oldEp.DNSName, zoneFQDN)
+
+	// Find the existing record
+	existingRecord, err := p.findRecord(ctx, zoneFQDN, source, oldEp.RecordType)
 	if err != nil {
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
 
-	var recordID int
-	for _, record := range existingRecords {
-		if record.Name == recordName && record.Type == oldEp.RecordType {
-			recordID = record.ID
-			break
+	if existingRecord == nil {
+		return fmt.Errorf("record not found for update: %s %s", source, oldEp.RecordType)
+	}
+
+	// Update with new values
+	record := RecordRequest{
+		Source: source,
+		Type:   newEp.RecordType,
+		Target: newEp.Targets[0],
+		TTL:    max(int(newEp.RecordTTL), minTTL),
+	}
+
+	if newEp.RecordType == "MX" || newEp.RecordType == "SRV" {
+		record.Priority = existingRecord.Priority
+		if record.Priority == 0 {
+			record.Priority = 10
 		}
 	}
 
-	if recordID == 0 {
-		return fmt.Errorf("record not found for update: %s %s", recordName, oldEp.RecordType)
-	}
-
-	// Prepare the updated record data
-	updateData := map[string]interface{}{
-		"content": newEp.Targets[0],
-		"ttl":     int(newEp.RecordTTL),
-	}
-
-	endpoint := fmt.Sprintf("/1/domain/zone/%d/record/%d", zoneID, recordID)
-	_, err = p.client.doRequest(ctx, "PUT", endpoint, updateData)
+	_, err = p.client.UpdateRecord(ctx, zoneFQDN, existingRecord.ID, record)
 	if err != nil {
 		return fmt.Errorf("failed to update record: %w", err)
 	}
 
-	slog.Info(fmt.Sprintf("Updated record %s %s -> %s", recordName, newEp.RecordType, newEp.Targets[0]))
+	slog.Info(fmt.Sprintf("Updated record %s %s %s", source, newEp.RecordType, newEp.Targets[0]))
 	return nil
 }
 
 // deleteRecord deletes a DNS record.
 func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint) error {
-	zoneID, recordName, err := p.extractZoneIDAndRecordName(ctx, ep)
+	zoneFQDN, err := p.findZoneForEndpoint(ctx, ep)
 	if err != nil {
-		return fmt.Errorf("failed to extract zone info: %w", err)
+		return fmt.Errorf("failed to find zone: %w", err)
 	}
 
-	// First, we need to find the record ID
-	existingRecords, err := p.client.GetRecords(ctx, zoneID)
+	source := extractRecordSource(ep.DNSName, zoneFQDN)
+
+	// Find the existing record
+	existingRecord, err := p.findRecord(ctx, zoneFQDN, source, ep.RecordType)
 	if err != nil {
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
 
-	var recordID int
-	for _, record := range existingRecords {
-		if record.Name == recordName && record.Type == ep.RecordType {
-			recordID = record.ID
-			break
-		}
-	}
-
-	if recordID == 0 {
+	if existingRecord == nil {
 		// Record already doesn't exist, consider this a success
-		slog.Warn(fmt.Sprintf("Record not found for deletion: %s %s", recordName, ep.RecordType))
+		slog.Warn(fmt.Sprintf("Record not found for deletion: %s %s", source, ep.RecordType))
 		return nil
 	}
 
-	endpoint := fmt.Sprintf("/1/domain/zone/%d/record/%d", zoneID, recordID)
-	_, err = p.client.doRequest(ctx, "DELETE", endpoint, nil)
+	err = p.client.DeleteRecord(ctx, zoneFQDN, existingRecord.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete record: %w", err)
 	}
 
-	slog.Info(fmt.Sprintf("Deleted record %s %s", recordName, ep.RecordType))
+	slog.Info(fmt.Sprintf("Deleted record %s %s", source, ep.RecordType))
 	return nil
 }
 
@@ -285,7 +327,7 @@ func (p *Provider) printChanges(changes *plan.Changes) error {
 	if len(changes.Create) > 0 {
 		slog.Info("Would create the following records:")
 		for _, ep := range changes.Create {
-			slog.Info(fmt.Sprintf("  + %s %s -> %s", ep.DNSName, ep.RecordType, ep.Targets))
+			slog.Info(fmt.Sprintf("  + %s %s %s", ep.DNSName, ep.RecordType, ep.Targets))
 		}
 	}
 
@@ -294,7 +336,7 @@ func (p *Provider) printChanges(changes *plan.Changes) error {
 		for i, oldEp := range changes.UpdateOld {
 			if i < len(changes.UpdateNew) {
 				newEp := changes.UpdateNew[i]
-				slog.Info(fmt.Sprintf("  ~ %s %s: %s -> %s", oldEp.DNSName, oldEp.RecordType, oldEp.Targets, newEp.Targets))
+				slog.Info(fmt.Sprintf("  ~ %s %s: %s %s", oldEp.DNSName, oldEp.RecordType, oldEp.Targets, newEp.Targets))
 			}
 		}
 	}
