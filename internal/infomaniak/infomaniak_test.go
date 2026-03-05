@@ -37,13 +37,13 @@ func TestProvider_Records(t *testing.T) {
 				Result: "success",
 				Data:   []InfomaniakDomain{{Name: "example.com"}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case "/2/domains/domains/example.com/zones":
 			response := ZoneListResponse{
 				Result: "success",
 				Data:   []InfomaniakZone{{FQDN: "example.com"}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case "/2/zones/example.com/records":
 			response := RecordListResponse{
 				Result: "success",
@@ -52,7 +52,7 @@ func TestProvider_Records(t *testing.T) {
 					{ID: 2, Source: "www", Type: "CNAME", Target: "example.com", TTL: 1800},
 				},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -102,17 +102,17 @@ func TestProvider_CreateRecord(t *testing.T) {
 				Result: "success",
 				Data:   []InfomaniakDomain{{Name: "example.com"}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/domains/domains/example.com/zones" && r.Method == "GET":
 			response := ZoneListResponse{
 				Result: "success",
 				Data:   []InfomaniakZone{{FQDN: "example.com"}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/zones/example.com/records" && r.Method == "POST":
 			createdRecord = true
 			var req RecordRequest
-			json.NewDecoder(r.Body).Decode(&req)
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 			response := RecordCreateResponse{
 				Result: "success",
 				Data: InfomaniakRecord{
@@ -123,7 +123,7 @@ func TestProvider_CreateRecord(t *testing.T) {
 					TTL:    req.TTL,
 				},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -157,23 +157,23 @@ func TestProvider_DeleteRecord(t *testing.T) {
 				Result: "success",
 				Data:   []InfomaniakDomain{{Name: "example.com"}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/domains/domains/example.com/zones" && r.Method == "GET":
 			response := ZoneListResponse{
 				Result: "success",
 				Data:   []InfomaniakZone{{FQDN: "example.com"}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/zones/example.com/records" && r.Method == "GET":
 			response := RecordListResponse{
 				Result: "success",
 				Data:   []InfomaniakRecord{{ID: 1, Source: "test", Type: "A", Target: "192.0.2.1", TTL: 3600}},
 			}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/zones/example.com/records/1" && r.Method == "DELETE":
 			deletedRecord = true
 			response := APIResponse{Result: "success"}
-			json.NewEncoder(w).Encode(response)
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -219,15 +219,17 @@ func TestProvider_MostSpecificZone(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
-			json.NewEncoder(w).Encode(DomainListResponse{
+			response := DomainListResponse{
 				Result: "success",
 				Data:   []InfomaniakDomain{{Name: "test.fr"}},
-			})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/domains/domains/test.fr/zones" && r.Method == "GET":
-			json.NewEncoder(w).Encode(ZoneListResponse{
+			response := ZoneListResponse{
 				Result: "success",
 				Data:   []InfomaniakZone{{FQDN: "test.fr"}, {FQDN: "sub.test.fr"}},
-			})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -250,23 +252,27 @@ func TestProvider_DeleteRecord_MultiZone(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
-			json.NewEncoder(w).Encode(DomainListResponse{
+			response := DomainListResponse{
 				Result: "success",
 				Data:   []InfomaniakDomain{{Name: "test.fr"}},
-			})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/domains/domains/test.fr/zones" && r.Method == "GET":
-			json.NewEncoder(w).Encode(ZoneListResponse{
+			response := ZoneListResponse{
 				Result: "success",
 				Data:   []InfomaniakZone{{FQDN: "test.fr"}, {FQDN: "sub.test.fr"}},
-			})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/zones/sub.test.fr/records" && r.Method == "GET":
-			json.NewEncoder(w).Encode(RecordListResponse{
+			response := RecordListResponse{
 				Result: "success",
 				Data:   []InfomaniakRecord{{ID: 42, Source: "v1", Type: "A", Target: "1.2.3.4", TTL: 60}},
-			})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.URL.Path == "/2/zones/sub.test.fr/records/42" && r.Method == "DELETE":
 			deletedRecord = true
-			json.NewEncoder(w).Encode(APIResponse{Result: "success"})
+			response := APIResponse{Result: "success"}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

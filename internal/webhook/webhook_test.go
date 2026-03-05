@@ -19,12 +19,12 @@ import (
 // mockProvider implements provider.Provider for testing.
 type mockProvider struct {
 	provider.BaseProvider
-	records         []*endpoint.Endpoint
-	recordsErr      error
-	applyErr        error
-	adjustedEps     []*endpoint.Endpoint
-	adjustErr       error
-	domainFilter    endpoint.DomainFilterInterface
+	records      []*endpoint.Endpoint
+	recordsErr   error
+	applyErr     error
+	adjustedEps  []*endpoint.Endpoint
+	adjustErr    error
+	domainFilter endpoint.DomainFilterInterface
 }
 
 func (m *mockProvider) Records(_ context.Context) ([]*endpoint.Endpoint, error) {

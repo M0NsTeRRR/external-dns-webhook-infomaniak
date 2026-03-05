@@ -10,10 +10,10 @@ import (
 
 func TestNegotiate(t *testing.T) {
 	tests := []struct {
-		name                string
-		header              string
-		wantOK              bool
-		wantUnsupportedVer  string
+		name               string
+		header             string
+		wantOK             bool
+		wantUnsupportedVer string
 	}{
 		{
 			name:   "exact match",

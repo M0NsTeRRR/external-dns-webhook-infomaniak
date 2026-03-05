@@ -41,7 +41,7 @@ func TestInfomaniakClient_GetDomains(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		require.NoError(t, json.NewEncoder(w).Encode(response))
 	}))
 	defer server.Close()
 
@@ -70,7 +70,7 @@ func TestInfomaniakClient_GetDomainZones(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		require.NoError(t, json.NewEncoder(w).Encode(response))
 	}))
 	defer server.Close()
 
@@ -99,7 +99,7 @@ func TestInfomaniakClient_GetRecords(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		require.NoError(t, json.NewEncoder(w).Encode(response))
 	}))
 	defer server.Close()
 
@@ -128,7 +128,7 @@ func TestInfomaniakClient_CreateRecord(t *testing.T) {
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		var req RecordRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Equal(t, "test", req.Source)
 		assert.Equal(t, "A", req.Type)
 		assert.Equal(t, "192.0.2.10", req.Target)
@@ -145,7 +145,7 @@ func TestInfomaniakClient_CreateRecord(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		require.NoError(t, json.NewEncoder(w).Encode(response))
 	}))
 	defer server.Close()
 
@@ -174,7 +174,7 @@ func TestInfomaniakClient_UpdateRecord(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 		var req RecordRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Equal(t, "test", req.Source)
 		assert.Equal(t, "A", req.Type)
 		assert.Equal(t, "192.0.2.20", req.Target)
@@ -190,7 +190,7 @@ func TestInfomaniakClient_UpdateRecord(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		require.NoError(t, json.NewEncoder(w).Encode(response))
 	}))
 	defer server.Close()
 
@@ -218,7 +218,7 @@ func TestInfomaniakClient_DeleteRecord(t *testing.T) {
 
 		response := APIResponse{Result: "success", Data: nil}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		require.NoError(t, json.NewEncoder(w).Encode(response))
 	}))
 	defer server.Close()
 
