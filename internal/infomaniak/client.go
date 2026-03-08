@@ -25,7 +25,6 @@ func NewInfomaniakClient(config *Config) *InfomaniakClient {
 	}
 }
 
-// doRequest performs an HTTP request to the Infomaniak API with context support
 func (c *InfomaniakClient) doRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
 	url := c.baseURL + endpoint
 
@@ -70,8 +69,6 @@ func (c *InfomaniakClient) doRequest(ctx context.Context, method, endpoint strin
 	return responseBody, nil
 }
 
-// GetDomains retrieves the list of domains using v2 API
-// GET /2/domains/domains
 func (c *InfomaniakClient) GetDomains(ctx context.Context) ([]InfomaniakDomain, error) {
 	body, err := c.doRequest(ctx, "GET", "/2/domains/domains", nil)
 	if err != nil {
@@ -90,8 +87,6 @@ func (c *InfomaniakClient) GetDomains(ctx context.Context) ([]InfomaniakDomain, 
 	return response.Data, nil
 }
 
-// GetDomainZones retrieves the list of DNS zones for a given domain using v2 API
-// GET /2/domains/domains/{domain}/zones
 func (c *InfomaniakClient) GetDomainZones(ctx context.Context, domainName string) ([]InfomaniakZone, error) {
 	endpoint := fmt.Sprintf("/2/domains/domains/%s/zones", domainName)
 	body, err := c.doRequest(ctx, "GET", endpoint, nil)
@@ -111,8 +106,6 @@ func (c *InfomaniakClient) GetDomainZones(ctx context.Context, domainName string
 	return response.Data, nil
 }
 
-// GetRecords retrieves the list of DNS records for a given zone using v2 API
-// GET /2/zones/{zone}/records
 func (c *InfomaniakClient) GetRecords(ctx context.Context, zoneFQDN string) ([]InfomaniakRecord, error) {
 	endpoint := fmt.Sprintf("/2/zones/%s/records", zoneFQDN)
 	body, err := c.doRequest(ctx, "GET", endpoint, nil)
@@ -132,8 +125,6 @@ func (c *InfomaniakClient) GetRecords(ctx context.Context, zoneFQDN string) ([]I
 	return response.Data, nil
 }
 
-// CreateRecord creates a new DNS record in a zone
-// POST /2/zones/{zone}/records
 func (c *InfomaniakClient) CreateRecord(ctx context.Context, zoneFQDN string, record RecordRequest) (*InfomaniakRecord, error) {
 	endpoint := fmt.Sprintf("/2/zones/%s/records", zoneFQDN)
 	body, err := c.doRequest(ctx, "POST", endpoint, record)
@@ -153,8 +144,6 @@ func (c *InfomaniakClient) CreateRecord(ctx context.Context, zoneFQDN string, re
 	return &response.Data, nil
 }
 
-// UpdateRecord updates an existing DNS record
-// PUT /2/zones/{zone}/records/{record}
 func (c *InfomaniakClient) UpdateRecord(ctx context.Context, zoneFQDN string, recordID int, record RecordRequest) (*InfomaniakRecord, error) {
 	endpoint := fmt.Sprintf("/2/zones/%s/records/%d", zoneFQDN, recordID)
 	body, err := c.doRequest(ctx, "PUT", endpoint, record)
@@ -174,8 +163,6 @@ func (c *InfomaniakClient) UpdateRecord(ctx context.Context, zoneFQDN string, re
 	return &response.Data, nil
 }
 
-// DeleteRecord deletes a DNS record
-// DELETE /2/zones/{zone}/records/{record}
 func (c *InfomaniakClient) DeleteRecord(ctx context.Context, zoneFQDN string, recordID int) error {
 	endpoint := fmt.Sprintf("/2/zones/%s/records/%d", zoneFQDN, recordID)
 	body, err := c.doRequest(ctx, "DELETE", endpoint, nil)

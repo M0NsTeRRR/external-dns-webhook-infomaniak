@@ -16,7 +16,6 @@ import (
 	"sigs.k8s.io/external-dns/provider"
 )
 
-// mockProvider implements provider.Provider for testing.
 type mockProvider struct {
 	provider.BaseProvider
 	records      []*endpoint.Endpoint
@@ -52,9 +51,7 @@ func (m *mockProvider) GetDomainFilter() endpoint.DomainFilterInterface {
 	return endpoint.NewDomainFilter([]string{})
 }
 
-// --- Negotiate ---
-
-func TestWebhook_Negotiate_Valid(t *testing.T) {
+func TestWebhookNegotiateValid(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -68,7 +65,7 @@ func TestWebhook_Negotiate_Valid(t *testing.T) {
 	assert.NotEmpty(t, w.Body.String())
 }
 
-func TestWebhook_Negotiate_MissingAccept(t *testing.T) {
+func TestWebhookNegotiate_MissingAccept(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -79,7 +76,7 @@ func TestWebhook_Negotiate_MissingAccept(t *testing.T) {
 	assert.Equal(t, http.StatusNotAcceptable, w.Code)
 }
 
-func TestWebhook_Negotiate_UnsupportedVersion(t *testing.T) {
+func TestWebhookNegotiateUnsupportedVersion(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -93,7 +90,7 @@ func TestWebhook_Negotiate_UnsupportedVersion(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"1"`)
 }
 
-func TestWebhook_Negotiate_ReturnsDomainFilter(t *testing.T) {
+func TestWebhookNegotiateReturnsDomainFilter(t *testing.T) {
 	filter := endpoint.NewDomainFilter([]string{"test.fr", "sub.test.fr"})
 	wh := New(&mockProvider{domainFilter: filter})
 
@@ -109,9 +106,7 @@ func TestWebhook_Negotiate_ReturnsDomainFilter(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-// --- Records ---
-
-func TestWebhook_Records_Valid(t *testing.T) {
+func TestWebhookRecordsValid(t *testing.T) {
 	eps := []*endpoint.Endpoint{
 		endpoint.NewEndpoint("abc.test.fr", "A", "1.2.3.4"),
 	}
@@ -133,7 +128,7 @@ func TestWebhook_Records_Valid(t *testing.T) {
 	assert.Equal(t, "abc.test.fr", result[0].DNSName)
 }
 
-func TestWebhook_Records_MissingAccept(t *testing.T) {
+func TestWebhookRecordsMissingAccept(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -144,7 +139,7 @@ func TestWebhook_Records_MissingAccept(t *testing.T) {
 	assert.Equal(t, http.StatusNotAcceptable, w.Code)
 }
 
-func TestWebhook_Records_ProviderError(t *testing.T) {
+func TestWebhookRecordsProviderError(t *testing.T) {
 	wh := New(&mockProvider{recordsErr: errors.New("api failure")})
 
 	w := httptest.NewRecorder()
@@ -156,9 +151,7 @@ func TestWebhook_Records_ProviderError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// --- ApplyChanges ---
-
-func TestWebhook_ApplyChanges_Valid(t *testing.T) {
+func TestWebhookApplyChangesValid(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	changes := plan.Changes{
@@ -175,7 +168,7 @@ func TestWebhook_ApplyChanges_Valid(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
-func TestWebhook_ApplyChanges_MissingContentType(t *testing.T) {
+func TestWebhookApplyChangesMissingContentType(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -186,7 +179,7 @@ func TestWebhook_ApplyChanges_MissingContentType(t *testing.T) {
 	assert.Equal(t, http.StatusNotAcceptable, w.Code)
 }
 
-func TestWebhook_ApplyChanges_InvalidBody(t *testing.T) {
+func TestWebhookApplyChangesInvalidBody(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -199,7 +192,7 @@ func TestWebhook_ApplyChanges_InvalidBody(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "error decoding changes")
 }
 
-func TestWebhook_ApplyChanges_ProviderError(t *testing.T) {
+func TestWebhookApplyChangesProviderError(t *testing.T) {
 	wh := New(&mockProvider{applyErr: errors.New("apply failed")})
 
 	changes := plan.Changes{}
@@ -214,9 +207,7 @@ func TestWebhook_ApplyChanges_ProviderError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// --- AdjustEndpoints ---
-
-func TestWebhook_AdjustEndpoints_Valid(t *testing.T) {
+func TestWebhookAdjustEndpointsValid(t *testing.T) {
 	adjusted := []*endpoint.Endpoint{
 		endpoint.NewEndpointWithTTL("abc.test.fr", "A", 60, "1.2.3.4"),
 	}
@@ -244,7 +235,7 @@ func TestWebhook_AdjustEndpoints_Valid(t *testing.T) {
 	assert.Equal(t, endpoint.TTL(60), result[0].RecordTTL)
 }
 
-func TestWebhook_AdjustEndpoints_MissingContentType(t *testing.T) {
+func TestWebhookAdjustEndpointsMissingContentType(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -256,7 +247,7 @@ func TestWebhook_AdjustEndpoints_MissingContentType(t *testing.T) {
 	assert.Equal(t, http.StatusNotAcceptable, w.Code)
 }
 
-func TestWebhook_AdjustEndpoints_MissingAccept(t *testing.T) {
+func TestWebhookAdjustEndpointsMissingAccept(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -268,7 +259,7 @@ func TestWebhook_AdjustEndpoints_MissingAccept(t *testing.T) {
 	assert.Equal(t, http.StatusNotAcceptable, w.Code)
 }
 
-func TestWebhook_AdjustEndpoints_InvalidBody(t *testing.T) {
+func TestWebhookAdjustEndpointsInvalidBody(t *testing.T) {
 	wh := New(&mockProvider{})
 
 	w := httptest.NewRecorder()
@@ -282,7 +273,7 @@ func TestWebhook_AdjustEndpoints_InvalidBody(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "failed to decode request body")
 }
 
-func TestWebhook_AdjustEndpoints_ProviderError(t *testing.T) {
+func TestWebhookAdjustEndpointsProviderError(t *testing.T) {
 	wh := New(&mockProvider{adjustErr: errors.New("adjust failed")})
 
 	body, _ := json.Marshal([]*endpoint.Endpoint{})

@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInfomaniakClient_NewInfomaniakClient(t *testing.T) {
+func TestInfomaniakClientNewInfomaniakClient(t *testing.T) {
 	config := &Config{
 		APIToken: "test-token",
 		DryRun:   false,
@@ -27,7 +27,7 @@ func TestInfomaniakClient_NewInfomaniakClient(t *testing.T) {
 	assert.Equal(t, "https://api.infomaniak.com", client.baseURL)
 }
 
-func TestInfomaniakClient_GetDomains(t *testing.T) {
+func TestInfomaniakClientGetDomains(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/2/domains/domains", r.URL.Path)
@@ -57,7 +57,7 @@ func TestInfomaniakClient_GetDomains(t *testing.T) {
 	assert.Equal(t, "test.com", domains[1].Name)
 }
 
-func TestInfomaniakClient_GetDomainZones(t *testing.T) {
+func TestInfomaniakClientGetDomainZones(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/2/domains/domains/example.com/zones", r.URL.Path)
@@ -85,7 +85,7 @@ func TestInfomaniakClient_GetDomainZones(t *testing.T) {
 	assert.Equal(t, "example.com", zones[0].FQDN)
 }
 
-func TestInfomaniakClient_GetRecords(t *testing.T) {
+func TestInfomaniakClientGetRecords(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/2/zones/example.com/records", r.URL.Path)
@@ -120,7 +120,7 @@ func TestInfomaniakClient_GetRecords(t *testing.T) {
 	assert.Equal(t, "CNAME", records[1].Type)
 }
 
-func TestInfomaniakClient_CreateRecord(t *testing.T) {
+func TestInfomaniakClientCreateRecord(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/2/zones/example.com/records", r.URL.Path)
@@ -167,7 +167,7 @@ func TestInfomaniakClient_CreateRecord(t *testing.T) {
 	assert.Equal(t, "192.0.2.10", record.Target)
 }
 
-func TestInfomaniakClient_UpdateRecord(t *testing.T) {
+func TestInfomaniakClientUpdateRecord(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
 		assert.Equal(t, "/2/zones/example.com/records/1001", r.URL.Path)
@@ -210,7 +210,7 @@ func TestInfomaniakClient_UpdateRecord(t *testing.T) {
 	assert.Equal(t, "192.0.2.20", record.Target)
 }
 
-func TestInfomaniakClient_DeleteRecord(t *testing.T) {
+func TestInfomaniakClientDeleteRecord(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
 		assert.Equal(t, "/2/zones/example.com/records/1001", r.URL.Path)
@@ -231,7 +231,7 @@ func TestInfomaniakClient_DeleteRecord(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestInfomaniakClient_doRequest(t *testing.T) {
+func TestInfomaniakClientdoRequest(t *testing.T) {
 	t.Run("successful request", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -295,7 +295,7 @@ func TestInfomaniakClient_doRequest(t *testing.T) {
 	})
 }
 
-func TestInfomaniakClient_ErrorHandling(t *testing.T) {
+func TestInfomaniakClientErrorHandling(t *testing.T) {
 	t.Run("API error response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

@@ -27,7 +27,7 @@ func TestNewInfomaniakProvider(t *testing.T) {
 	assert.Equal(t, config, provider.client.config)
 }
 
-func TestProvider_Records(t *testing.T) {
+func TestProviderRecords(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -75,7 +75,7 @@ func TestProvider_Records(t *testing.T) {
 	assert.Equal(t, "CNAME", endpoints[1].RecordType)
 }
 
-func TestProvider_ApplyChanges_DryRun(t *testing.T) {
+func TestProviderApplyChangesDryRun(t *testing.T) {
 	config := &Config{APIToken: "test-token", DryRun: true}
 	client := NewInfomaniakClient(config)
 
@@ -91,7 +91,7 @@ func TestProvider_ApplyChanges_DryRun(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestProvider_CreateRecord(t *testing.T) {
+func TestProviderCreateRecord(t *testing.T) {
 	createdRecord := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -146,7 +146,7 @@ func TestProvider_CreateRecord(t *testing.T) {
 	assert.True(t, createdRecord, "Expected record to be created")
 }
 
-func TestProvider_DeleteRecord(t *testing.T) {
+func TestProviderDeleteRecord(t *testing.T) {
 	deletedRecord := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -196,7 +196,7 @@ func TestProvider_DeleteRecord(t *testing.T) {
 	assert.True(t, deletedRecord, "Expected record to be deleted")
 }
 
-func TestProvider_AdjustEndpoints(t *testing.T) {
+func TestProviderAdjustEndpoints(t *testing.T) {
 	provider := &Provider{}
 
 	endpoints := []*endpoint.Endpoint{
@@ -214,7 +214,7 @@ func TestProvider_AdjustEndpoints(t *testing.T) {
 	assert.Equal(t, endpoint.TTL(minTTL), result[3].RecordTTL)
 }
 
-func TestProvider_MostSpecificZone(t *testing.T) {
+func TestProviderMostSpecificZone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -246,7 +246,7 @@ func TestProvider_MostSpecificZone(t *testing.T) {
 	assert.Equal(t, "sub.test.fr", zone, "should select the most specific zone")
 }
 
-func TestProvider_DeleteRecord_MultiZone(t *testing.T) {
+func TestProviderDeleteRecordMultiZone(t *testing.T) {
 	deletedRecord := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
