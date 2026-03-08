@@ -36,6 +36,62 @@ _External DNS webhook provider for infomaniak_
 ## 🪐 Usage
 <!-- template:end:usage/title -->
 
+The deployment can be performed in every way Kubernetes supports. The following example shows the deployment as a sidecar container in the ExternalDNS pod using the [charts for ExternalDNS](https://github.com/kubernetes-sigs/external-dns/tree/master/charts/external-dns).
+
+Create the secret containing your Infomaniak API key
+```bash
+kubectl create secret generic infomaniak-credentials --from-literal=api-token=myapitoken
+```
+
+Install the ExternalDNS Helm chart as explained in the [official documentation](https://kubernetes-sigs.github.io/external-dns/latest/charts/external-dns/#installing-the-chart).
+
+Here’s an example `values.yaml` file you can use as a reference.
+Adjust the values according to your needs:
+
+```yaml
+image:
+  tag: v0.20.0
+
+# -- ExternalDNS Log level.
+logLevel: debug # reduce in production
+
+# -- if true, ExternalDNS will run in a namespaced scope (Role and Rolebinding will be namespaced too).
+namespaced: false
+
+# -- Kubernetes resources to monitor for DNS entries.
+sources:
+  - ingress
+  - service
+  - crd
+
+# -- How DNS records are synchronized between sources and providers; available values are create-only, sync, & upsert-only.
+policy: "sync"
+
+provider:
+  name: webhook
+  webhook:
+    image:
+      repository: ghcr.io/m0nsterrr/external-dns-webhook-infomaniak
+      tag: v0.1.0
+      pullPolicy: IfNotPresent
+    env:
+      - name: LOG_LEVEL
+        value: debug # reduce in production
+      - name: INFOMANIAK_API_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: infomaniak-credentials
+            key: api-token
+      # The webhook server listens on localhost by default. Otherwise, you can set SERVER_HOST.
+      - name: SERVER_PORT
+        value: "8888" # default and recommended port for exposing webhook provider EPs
+      # The exposed server listens on all interfaces (0.0.0.0) by default. Otherwise, you can set METRICS_HOST.
+      - name: METRICS_PORT
+        value: "8080" # default and recommended port for exposing metrics and health EPs
+      - name: DRY_RUN
+        value: "true" # set to "false" when you want to allow making changes to your DNS resources
+```
+
 <!-- template:begin:dev -->
 ## 🛠️ Dev
 
