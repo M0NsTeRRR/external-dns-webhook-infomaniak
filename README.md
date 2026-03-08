@@ -11,7 +11,6 @@ _External DNS webhook provider for infomaniak_
 
 <div align="center">
 
-[![Helm](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FM0NsTeRRR%2Fhelm-charts%2Frefs%2Fheads%2Fmain%2Fcharts%2Fexternal-dns-webhook-infomaniak%2FChart.yaml&query=%24.version&label=&logo=helm&style=for-the-badge&logoColor=0F1487&color=white)](https://github.com/M0NsTeRRR/helm-charts/tree/main/charts/external-dns-webhook-infomaniak)
 </div>
 
 <div align="center">
@@ -24,7 +23,6 @@ _External DNS webhook provider for infomaniak_
 <!-- template:begin:table_of_content -->
 ## 🔗 Table of Contents
 - [Usage](#-usage)
-    - [Helm chart](#-helm-chart)
 - [Dev](#%EF%B8%8F-dev)
     - [Run linter and formatter](#run-linter-and-formatter)
     - [Run test](#run-test)
@@ -37,11 +35,6 @@ _External DNS webhook provider for infomaniak_
 <!-- template:begin:usage/title -->
 ## 🪐 Usage
 <!-- template:end:usage/title -->
-
-<!-- template:begin:usage/helm -->
-#### ☸ Helm chart
-See [helm-charts](https://github.com/M0NsTeRRR/helm-charts/tree/main/charts/external-dns-webhook-infomaniak).
-<!-- template:end:usage/helm -->
 
 <!-- template:begin:dev -->
 ## 🛠️ Dev
