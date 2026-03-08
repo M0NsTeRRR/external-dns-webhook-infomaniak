@@ -61,24 +61,16 @@ func checkHeader(w http.ResponseWriter, r *http.Request, value, headerName strin
 	return fmt.Errorf("%s", msg)
 }
 
-// negotiate parses the header value and checks whether our media type is acceptable.
+// negotiate checks whether the header value matches the supported media type.
 // Returns (true, "") if supported.
 // Returns (false, version) if the base type matches but the version is not supported.
 // Returns (false, "") if the media type is entirely different.
 func negotiate(header string) (ok bool, unsupportedVersion string) {
-	for _, part := range strings.Split(header, ",") {
-		part = strings.TrimSpace(part)
-		// strip quality value (e.g. ;q=0.9) while keeping media type parameters like ;version=1
-		if i := strings.Index(part, ";q="); i != -1 {
-			part = strings.TrimSpace(part[:i])
-		}
-		if part == "*/*" || part == MediaTypeFormatAndVersion {
-			return true, ""
-		}
-		// base type matches but version differs
-		if v, found := strings.CutPrefix(part, mediaTypeBase+";version="); found {
-			unsupportedVersion = v
-		}
+	if header == MediaTypeFormatAndVersion {
+		return true, ""
 	}
-	return false, unsupportedVersion
+	if v, found := strings.CutPrefix(header, mediaTypeBase+";version="); found {
+		return false, v
+	}
+	return false, ""
 }

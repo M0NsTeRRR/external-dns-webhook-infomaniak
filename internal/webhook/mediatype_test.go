@@ -21,36 +21,10 @@ func TestNegotiate(t *testing.T) {
 			wantOK: true,
 		},
 		{
-			name:   "wildcard",
-			header: "*/*",
-			wantOK: true,
-		},
-		{
-			name:   "multiple values with exact match",
-			header: "application/json, " + MediaTypeFormatAndVersion,
-			wantOK: true,
-		},
-		{
-			name:   "with quality value on supported type",
-			header: MediaTypeFormatAndVersion + ";q=0.9",
-			wantOK: true,
-		},
-		{
-			name:   "multiple values with wildcard fallback",
-			header: "application/json;q=0.8, */*;q=0.1",
-			wantOK: true,
-		},
-		{
 			name:               "known base type but unsupported version",
 			header:             mediaTypeBase + ";version=2",
 			wantOK:             false,
 			wantUnsupportedVer: "2",
-		},
-		{
-			name:               "multiple values, unsupported version only",
-			header:             mediaTypeBase + ";version=2, " + mediaTypeBase + ";version=3",
-			wantOK:             false,
-			wantUnsupportedVer: "3",
 		},
 		{
 			name:   "completely different media type",
