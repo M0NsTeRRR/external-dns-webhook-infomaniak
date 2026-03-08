@@ -1,0 +1,292 @@
+---
+# THIS FILE IS GENERATED! DO NOT EDIT! Maintained by Pulumi
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+permissions: {}
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  changelog:
+    name: Generate changelog
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+    outputs:
+      release_body: ${{ steps.git-cliff.outputs.content }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate a changelog
+        id: git-cliff
+        uses: orhun/git-cliff-action@c93ef52f3d0ddcdcc9bd5447d98d458a11cd4f72 # v4.7.1
+        with:
+          config: .github/cliff.toml
+          args: -vv --current
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
+
+  create-draft-release:
+    name: Create release as draft
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+    needs: [changelog]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Create release as draft
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ (alpha|beta|rc) ]]; then
+            gh release create ${GITHUB_REF_NAME}  -t "Release ${GITHUB_REF_NAME}" -n "${RELEASE_BODY}" --draft --prerelease
+          else
+            gh release create ${GITHUB_REF_NAME}  -t "Release ${GITHUB_REF_NAME}" -n "${RELEASE_BODY}" --draft
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_BODY: ${{ needs.changelog.outputs.release_body }}
+
+  build-docker:
+    name: Build docker
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # needed for pushing docker image
+    outputs:
+      tags: ${{ steps.build.outputs.tags }}
+      repository_lc: ${{ steps.repository_lc.outputs.REPOSITORY_LC }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get repository in lower case
+        id: repository_lc
+        run: |
+          echo "REPOSITORY_LC=${REPOSITORY@L}" >> $GITHUB_OUTPUT
+        env:
+          REPOSITORY: ${{ github.repository }}
+
+      - name: Get Git commit timestamps
+        run: echo "TIMESTAMP=$(git log -1 --pretty=%ct)" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          tags: ghcr.io/${{ steps.repository_lc.outputs.REPOSITORY_LC }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true,rewrite-timestamp=true
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ env.TIMESTAMP }}
+            VERSION=${GITHUB_REF_NAME}
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          touch "${{ runner.temp }}/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: Upload digest
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: digests-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-docker:
+    name: Merge docker
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # needed for pushing docker image
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.manifest.outputs.DIGEST }}
+    needs: [build-docker]
+    steps:
+      - name: Downloads digests
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          pattern: digests-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Create manifest list and push
+        id: manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # Generate the list of tags
+          TAGS=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+
+          # Generate the list of valid digests
+          DIGESTS=""
+          for file in *; do
+            DIGESTS+="ghcr.io/${REPOSITORY_LC}@sha256:${file} "
+          done
+
+          docker buildx imagetools create $TAGS $DIGESTS
+
+          MANIFEST_DIGEST=$(docker buildx imagetools inspect "ghcr.io/${REPOSITORY_LC}:${GITHUB_REF_NAME}" --format "{{json .Manifest.Digest}}" | tr -d '"')
+          echo "DIGEST=${MANIFEST_DIGEST}" >> $GITHUB_OUTPUT
+        env:
+          REPOSITORY_LC: ${{ needs.build-docker.outputs.repository_lc }}
+
+  sign-docker:
+    name: Sign Docker
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write # needed for pushing docker signature
+      id-token: write # needed for signing the images with GitHub OIDC Token
+    env:
+      TAGS: ${{ needs.merge-docker.outputs.tags }}
+      DIGEST: ${{ needs.merge-docker.outputs.digest }}
+    needs: [merge-docker]
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.5
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign the images with GitHub OIDC Token
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          echo "Sign image for ${images}"
+          cosign sign -y --recursive ${images}
+
+      - name: Generate SBOM
+        run: |
+          for tag in ${TAGS}; do
+            sbom_filename=$(echo "$tag" | cut -d'/' -f3-)
+            echo "Generate sbom for ${tag}@${DIGEST}"
+            trivy image --format cyclonedx --output ${sbom_filename}.sbom ${tag}@${DIGEST}
+          done
+
+      - name: Attest images with SBOM
+        run: |
+          for tag in ${TAGS}; do
+            sbom_filename=$(echo "$tag" | cut -d'/' -f3-)
+            echo "Attest image for ${tag}@${DIGEST}"
+            cosign attest -y \
+              --type cyclonedx \
+              --predicate ${sbom_filename}.sbom \
+              ${tag}@${DIGEST}
+          done
+
+  verify-docker:
+    name: Verify docker
+    runs-on: ubuntu-slim
+    permissions:
+      packages: read
+    env:
+      TAGS: ${{ needs.merge-docker.outputs.tags }}
+      DIGEST: ${{ needs.merge-docker.outputs.digest }}
+    needs: [merge-docker, sign-docker]
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Verify docker signature
+        run: |
+          for tag in ${TAGS}; do
+            echo "Verify image for ${tag}@${DIGEST}"
+            cosign verify ${tag}@${DIGEST} \
+              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          done
+
+      - name: Verify docker attestation
+        run: |
+          for tag in ${TAGS}; do
+            echo "Verify image for ${tag}@${DIGEST}"
+            cosign verify-attestation ${tag}@${DIGEST} \
+              --type=cyclonedx \
+              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          done
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+    needs: [create-draft-release, verify-docker]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Create release
+        run: gh release edit ${GITHUB_REF_NAME} --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
