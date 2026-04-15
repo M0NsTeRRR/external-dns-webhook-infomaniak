@@ -72,6 +72,7 @@ provider:
   webhook:
     image:
       repository: ghcr.io/m0nsterrr/external-dns-webhook-infomaniak
+      # Check the latest GitHub release to get the newest tag.
       tag: v0.1.0
       pullPolicy: IfNotPresent
     env:
