@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -20,15 +19,15 @@ var (
 func main() {
 	logging.Init()
 
-	slog.Info(fmt.Sprintf("Starting external-dns-webhook-infomaniak version %s built on %s", version, buildTime))
+	slog.Info("Starting external-dns-webhook-infomaniak", "version", version, "build_time", buildTime)
 
 	config := config.Init()
 	provider, err := provider.Init(config)
 	if err != nil {
 		slog.Error("Failed to initialize DNS provider", "error", err)
 		os.Exit(1)
-
 	}
+
 	appServer, healthServer := server.Init(config, api.WebhookServer{Provider: provider})
 	server.ShutdownGracefully(appServer, healthServer)
 }

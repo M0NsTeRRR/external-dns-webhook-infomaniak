@@ -17,7 +17,7 @@ type InfomaniakClient struct {
 }
 
 func NewInfomaniakClient(config *Config) *InfomaniakClient {
-	slog.Info("creating a new client for Infomaniak API Client")
+	slog.Info("Creating a new client for Infomaniak API Client")
 	return &InfomaniakClient{
 		config:  config,
 		client:  &http.Client{},
@@ -30,9 +30,9 @@ func (c *InfomaniakClient) doRequest(ctx context.Context, method, endpoint strin
 
 	var req *http.Request
 	var err error
+	var jsonBody []byte
 
 	if body != nil {
-		var jsonBody []byte
 		jsonBody, err = json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request body: %w", err)
@@ -49,7 +49,7 @@ func (c *InfomaniakClient) doRequest(ctx context.Context, method, endpoint strin
 	req.Header.Set("Authorization", "Bearer "+c.config.APIToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	slog.Debug(fmt.Sprintf("Request: %s %s", method, url))
+	slog.Debug("API request", "method", method, "url", url, "body", jsonBody)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

@@ -37,7 +37,7 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 	// Get all domains
 	domains, err := p.client.GetDomains(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get domains: %w", err)
+		return nil, err
 	}
 
 	slog.Debug(fmt.Sprintf("Found %d domains", len(domains)))
@@ -53,7 +53,7 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 		// Get zones for this domain
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Failed to get zones for domain %s: %v", domain.Name, err))
+			slog.Warn(err.Error())
 			continue
 		}
 
@@ -61,7 +61,7 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 			// Get records for this zone
 			records, err := p.client.GetRecords(ctx, zone.FQDN)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("Failed to get records for zone %s: %v", zone.FQDN, err))
+				slog.Warn(err.Error())
 				continue
 			}
 
@@ -86,19 +86,19 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 		return p.printChanges(changes)
 	}
 
-	slog.Info(fmt.Sprintf("requesting apply changes, create: %d, updateOld: %d, updateNew: %d, delete: %d", len(changes.Create), len(changes.UpdateOld), len(changes.UpdateNew), len(changes.Delete)))
+	slog.Info("Requesting apply changes", "create", len(changes.Create), "update_old", len(changes.UpdateOld), "update_new", len(changes.UpdateNew), "delete", len(changes.Delete))
 
 	// Process deletions first
 	for _, ep := range changes.Delete {
 		if err := p.deleteRecord(ctx, ep); err != nil {
-			return fmt.Errorf("failed to delete record %s: %w", ep.DNSName, err)
+			return err
 		}
 	}
 
 	// Process creations
 	for _, ep := range changes.Create {
 		if err := p.createRecord(ctx, ep); err != nil {
-			return fmt.Errorf("failed to create record %s: %w", ep.DNSName, err)
+			return err
 		}
 	}
 
@@ -106,7 +106,7 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 	for i, oldEp := range changes.UpdateOld {
 		if i < len(changes.UpdateNew) {
 			if err := p.updateRecord(ctx, oldEp, changes.UpdateNew[i]); err != nil {
-				return fmt.Errorf("failed to update record %s: %w", oldEp.DNSName, err)
+				return err
 			}
 		}
 	}
@@ -166,14 +166,14 @@ func extractRecordSource(dnsName, zoneFQDN string) string {
 func (p *Provider) findZoneForEndpoint(ctx context.Context, ep *endpoint.Endpoint) (string, error) {
 	domains, err := p.client.GetDomains(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to get domains: %w", err)
+		return "", err
 	}
 
 	var bestMatch string
 	for _, domain := range domains {
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Failed to get zones for domain %s: %v", domain.Name, err))
+			slog.Warn(err.Error())
 			continue
 		}
 
@@ -233,10 +233,10 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 
 		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
 		if err != nil {
-			return fmt.Errorf("failed to create record: %w", err)
+			return err
 		}
 
-		slog.Info(fmt.Sprintf("Created record %s %s %s", source, ep.RecordType, target))
+		slog.Info("Created record", "source", source, "record_type", ep.RecordType, "target", target)
 	}
 
 	return nil
@@ -278,10 +278,10 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 
 	_, err = p.client.UpdateRecord(ctx, zoneFQDN, existingRecord.ID, record)
 	if err != nil {
-		return fmt.Errorf("failed to update record: %w", err)
+		return err
 	}
 
-	slog.Info(fmt.Sprintf("Updated record %s %s %s", source, newEp.RecordType, newEp.Targets[0]))
+	slog.Info("Updated record", "source", source, "record_type", newEp.RecordType, "target", newEp.Targets[0])
 	return nil
 }
 
@@ -302,16 +302,16 @@ func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 
 	if existingRecord == nil {
 		// Record already doesn't exist, consider this a success
-		slog.Warn(fmt.Sprintf("Record not found for deletion: %s %s", source, ep.RecordType))
+		slog.Warn("Record not found for deletion", "source", source, "record_type", ep.RecordType)
 		return nil
 	}
 
 	err = p.client.DeleteRecord(ctx, zoneFQDN, existingRecord.ID)
 	if err != nil {
-		return fmt.Errorf("failed to delete record: %w", err)
+		return err
 	}
 
-	slog.Info(fmt.Sprintf("Deleted record %s %s", source, ep.RecordType))
+	slog.Info("Deleted record", "source", source, "record_type", ep.RecordType)
 	return nil
 }
 
