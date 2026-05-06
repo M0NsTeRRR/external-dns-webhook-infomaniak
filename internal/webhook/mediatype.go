@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -57,7 +56,6 @@ func checkHeader(w http.ResponseWriter, r *http.Request, value, headerName strin
 	}
 
 	fmt.Fprint(w, msg)
-	log.Print(msg)
 	return fmt.Errorf("%s", msg)
 }
 

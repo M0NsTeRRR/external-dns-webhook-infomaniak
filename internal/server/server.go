@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,7 +29,7 @@ func Init(cfg config.Config, webhookServer api.WebhookServer) (*http.Server, *ht
 	appServer := createServer(fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort), appRouter, cfg.ServerReadTimeout, cfg.ServerWriteTimeout)
 
 	go func() {
-		log.Printf("starting app server on %s", appServer.Addr)
+		slog.Info("starting app server", "address", appServer.Addr)
 		if err := appServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("could not listen on %s: %v\n", appServer.Addr, err)
 		}
@@ -41,7 +42,7 @@ func Init(cfg config.Config, webhookServer api.WebhookServer) (*http.Server, *ht
 	healthServer := createServer(fmt.Sprintf("%s:%d", cfg.MetricsHost, cfg.MetricsPort), healthRouter, cfg.ServerReadTimeout, cfg.ServerWriteTimeout)
 
 	go func() {
-		log.Printf("starting health server on %s", healthServer.Addr)
+		slog.Info("starting health server", "address", healthServer.Addr)
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("could not listen on %s: %v\n", healthServer.Addr, err)
 		}
@@ -57,7 +58,7 @@ func createServer(addr string, handler http.Handler, readTimeout, writeTimeout t
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
-		log.Printf("error writing response: %v", err)
+		slog.Error("error writing response", "error", err)
 	}
 }
 
@@ -66,15 +67,15 @@ func ShutdownGracefully(mainServer *http.Server, healthServer *http.Server) {
 	signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	sig := <-sigCh
 
-	log.Printf("shutting down servers due to received signal: %v", sig)
+	slog.Error("shutting down servers due to received signal", "error", sig)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := mainServer.Shutdown(ctx); err != nil {
-		log.Printf("error shutting down main server: %v", err)
+		slog.Error("error shutting down main server", "error", err)
 	}
 
 	if err := healthServer.Shutdown(ctx); err != nil {
-		log.Printf("error shutting down health server: %v", err)
+		slog.Error("error shutting down health server", "error", err)
 	}
 }

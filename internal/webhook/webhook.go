@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	extdnsprovider "sigs.k8s.io/external-dns/provider"
@@ -30,13 +30,13 @@ func (wh *Webhook) Negotiate(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := json.Marshal(wh.provider.GetDomainFilter())
 	if err != nil {
-		log.Printf("failed to marshal domain filter: %v", err)
+		slog.Error("failed to marshal domain filter", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set(contentTypeHeader, MediaTypeFormatAndVersion)
 	if _, err := w.Write(b); err != nil {
-		log.Printf("error writing negotiate response: %v", err)
+		slog.Error("error writing negotiate response", "error", err)
 	}
 }
 
@@ -47,14 +47,14 @@ func (wh *Webhook) Records(w http.ResponseWriter, r *http.Request) {
 	}
 	records, err := wh.provider.Records(r.Context())
 	if err != nil {
-		log.Printf("error getting records: %v", err)
+		slog.Error("error getting records", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set(contentTypeHeader, MediaTypeFormatAndVersion)
 	w.Header().Set(varyHeader, contentTypeHeader)
 	if err := json.NewEncoder(w).Encode(records); err != nil {
-		log.Printf("error encoding records: %v", err)
+		slog.Error("error encoding records", "error", err)
 	}
 }
 
@@ -71,7 +71,7 @@ func (wh *Webhook) ApplyChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := wh.provider.ApplyChanges(context.Background(), &changes); err != nil {
-		log.Printf("error applying changes: %v", err)
+		slog.Error("error applying changes", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -95,13 +95,13 @@ func (wh *Webhook) AdjustEndpoints(w http.ResponseWriter, r *http.Request) {
 	}
 	pve, err := wh.provider.AdjustEndpoints(pve)
 	if err != nil {
-		log.Printf("error adjusting endpoints: %v", err)
+		slog.Error("error adjusting endpoints", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set(contentTypeHeader, MediaTypeFormatAndVersion)
 	w.Header().Set(varyHeader, contentTypeHeader)
 	if err := json.NewEncoder(w).Encode(pve); err != nil {
-		log.Printf("error encoding adjusted endpoints: %v", err)
+		slog.Error("error encoding adjusted endpoints", "error", err)
 	}
 }
