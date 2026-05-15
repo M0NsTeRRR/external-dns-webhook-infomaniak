@@ -87,4 +87,4 @@ jobs:
           push: false
           build-args: |
             SOURCE_DATE_EPOCH=${{ env.TIMESTAMP }}
-            VERSION=${GITHUB_REF_NAME}
+            VERSION=${{ github.ref_name }}
