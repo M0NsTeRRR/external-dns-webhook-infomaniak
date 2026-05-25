@@ -15,7 +15,7 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Devenv
+# devenv
 .devenv*
 devenv.local.nix
 devenv.local.yaml
