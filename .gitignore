@@ -14,3 +14,14 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+# devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
