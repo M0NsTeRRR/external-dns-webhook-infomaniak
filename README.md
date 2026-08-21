@@ -38,7 +38,7 @@ _External DNS webhook provider for infomaniak_
 
 The deployment can be performed in every way Kubernetes supports. The following example shows the deployment as a sidecar container in the ExternalDNS pod using the [charts for ExternalDNS](https://github.com/kubernetes-sigs/external-dns/tree/master/charts/external-dns).
 
-Create the secret containing your Infomaniak API key
+Create the secret containing your Infomaniak API token. The token needs the `domain:read`, `dns:read`, and `dns:write` scopes.
 ```bash
 kubectl create secret generic infomaniak-credentials --from-literal=api-token=myapitoken
 ```
