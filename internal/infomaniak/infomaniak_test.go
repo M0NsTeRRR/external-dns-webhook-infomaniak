@@ -537,3 +537,59 @@ func TestProviderUpdateRecordReconcilesTargets(t *testing.T) {
 	require.Len(t, deleted, 1)
 	assert.Equal(t, "/2/zones/example.com/records/10", deleted[0])
 }
+
+func TestProviderUpdateRecordRespectsOwnership(t *testing.T) {
+	var deleted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
+			require.NoError(t, json.NewEncoder(w).Encode(DomainListResponse{
+				Result: "success",
+				Data:   []InfomaniakDomain{{Name: "example.com"}},
+			}))
+		case r.URL.Path == "/2/domains/domains/example.com/zones" && r.Method == "GET":
+			require.NoError(t, json.NewEncoder(w).Encode(ZoneListResponse{
+				Result: "success",
+				Data:   []InfomaniakZone{{FQDN: "example.com"}},
+			}))
+		case r.URL.Path == "/2/zones/example.com/records" && r.Method == "GET":
+			require.NoError(t, json.NewEncoder(w).Encode(RecordListResponse{
+				Result: "success",
+				Data: []InfomaniakRecord{
+					{ID: 10, Source: "www", Type: "A", Target: "192.0.2.1", TTL: 300},
+					{ID: 11, Source: "www", Type: "A", Target: "192.0.2.2", TTL: 300},
+					{ID: 99, Source: "www", Type: "A", Target: "203.0.113.9", TTL: 300},
+				},
+			}))
+		case r.URL.Path == "/2/zones/example.com/records" && r.Method == "POST":
+			require.NoError(t, json.NewEncoder(w).Encode(RecordCreateResponse{Result: "success", Data: InfomaniakRecord{ID: 12}}))
+		case r.Method == "DELETE":
+			deleted = append(deleted, r.URL.Path)
+			require.NoError(t, json.NewEncoder(w).Encode(APIResponse{Result: "success"}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+	provider := &Provider{client: client, dryRun: false, domainFilter: nil}
+
+	// A third row (id 99) exists live but was never owned by ExternalDNS (it is not
+	// in UpdateOld) — e.g. added by another tool managing the same zone. It must
+	// survive the reconcile: deletions come from oldEp, not the live records.
+	changes := &plan.Changes{
+		UpdateOld: []*endpoint.Endpoint{endpoint.NewEndpoint("www.example.com", "A", "192.0.2.1", "192.0.2.2")},
+		UpdateNew: []*endpoint.Endpoint{endpoint.NewEndpoint("www.example.com", "A", "192.0.2.2", "192.0.2.3")},
+	}
+	require.NoError(t, provider.ApplyChanges(context.Background(), changes))
+
+	// Only ExternalDNS's own removed target (192.0.2.1, id 10) is deleted; the
+	// unowned row (id 99) is left untouched.
+	require.Len(t, deleted, 1)
+	assert.Equal(t, "/2/zones/example.com/records/10", deleted[0])
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"sigs.k8s.io/external-dns/endpoint"
@@ -134,16 +135,15 @@ func mergeRecords(records []InfomaniakRecord, zoneFQDN string) []*endpoint.Endpo
 	var order []string
 
 	for _, record := range records {
+		key := ensureFQDN(record.Source, zoneFQDN) + "/" + record.Type
 		// The first row for a name/type builds the endpoint; later rows just add
 		// their target to it.
-		key := ensureFQDN(record.Source, zoneFQDN) + "/" + record.Type
 		if ep, ok := byKey[key]; ok {
 			ep.Targets = append(ep.Targets, normalizeReadTarget(record.Type, record.Target))
-			continue
+		} else {
+			byKey[key] = recordToEndpoint(record, zoneFQDN)
+			order = append(order, key)
 		}
-
-		byKey[key] = recordToEndpoint(record, zoneFQDN)
-		order = append(order, key)
 	}
 
 	endpoints := make([]*endpoint.Endpoint, 0, len(order))
@@ -171,7 +171,13 @@ func normalizeReadTarget(recordType, target string) string {
 	switch recordType {
 	case "SRV":
 		// SRV target is "priority weight port host"; ensure the host ends with a dot.
-		if fields := strings.Fields(target); len(fields) == 4 && !strings.HasSuffix(fields[3], ".") {
+		fields := strings.Fields(target)
+		if len(fields) != 4 {
+			slog.Warn("SRV target does not have 4 fields; leaving it unchanged", "target", target)
+
+			return target
+		}
+		if !strings.HasSuffix(fields[3], ".") {
 			fields[3] += "."
 
 			return strings.Join(fields, " ")
@@ -181,6 +187,23 @@ func normalizeReadTarget(recordType, target string) string {
 	}
 
 	return target
+}
+
+// recordPriority extracts the priority MX and SRV records carry as the leading
+// field of their target (e.g. "10 mail.example.com." or "0 5 5060 sip.example.com."),
+// so it can be sent in Infomaniak's dedicated priority field instead of a hard-coded
+// value. Returns false for other types or a non-numeric leading field.
+func recordPriority(recordType, target string) (int, bool) {
+	switch recordType {
+	case "MX", "SRV":
+		if fields := strings.Fields(target); len(fields) > 0 {
+			if priority, err := strconv.Atoi(fields[0]); err == nil {
+				return priority, true
+			}
+		}
+	}
+
+	return 0, false
 }
 
 // unquoteTXT joins the one or more double-quoted character-strings Infomaniak
@@ -284,9 +307,9 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 			TTL:    max(int(ep.RecordTTL), minTTL),
 		}
 
-		// Set priority for MX and SRV records
-		if ep.RecordType == "MX" || ep.RecordType == "SRV" {
-			record.Priority = 10
+		// MX/SRV carry their priority in the target; send it in the priority field.
+		if priority, ok := recordPriority(ep.RecordType, target); ok {
+			record.Priority = priority
 		}
 
 		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
@@ -300,11 +323,14 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 	return nil
 }
 
-// updateRecord applies a change as the delta between the current and desired
-// target sets: Infomaniak keeps one row per target, so rows for added targets are
-// created and rows for removed targets deleted, leaving shared ones untouched. The
-// old endpoint is ignored; we reconcile against the live records instead.
-func (p *Provider) updateRecord(ctx context.Context, _, newEp *endpoint.Endpoint) error {
+// updateRecord applies a change as the delta between the old and new target sets:
+// Infomaniak keeps one row per target, so rows for added targets are created and
+// rows for removed targets deleted, leaving shared ones untouched. Deletions are
+// derived from oldEp — the set ExternalDNS previously owned — never from the live
+// records, so entries another tool manages in the same zone are left alone (they
+// are never in oldEp). Live records are read only to resolve a target to its row ID
+// and to avoid recreating one that already exists.
+func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endpoint) error {
 	zoneFQDN, err := p.findZoneForEndpoint(ctx, newEp)
 	if err != nil {
 		return fmt.Errorf("failed to find zone: %w", err)
@@ -317,8 +343,8 @@ func (p *Provider) updateRecord(ctx context.Context, _, newEp *endpoint.Endpoint
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
 
-	// Index live rows for this name/type by normalized target, to compare against
-	// the desired targets in the same representation.
+	// Index live rows for this name/type by normalized target, matching ExternalDNS's
+	// representation, so a target can be resolved to its row.
 	existing := make(map[string]InfomaniakRecord)
 	for _, record := range records {
 		if record.Source == source && record.Type == newEp.RecordType {
@@ -343,8 +369,8 @@ func (p *Provider) updateRecord(ctx context.Context, _, newEp *endpoint.Endpoint
 			Target: target,
 			TTL:    max(int(newEp.RecordTTL), minTTL),
 		}
-		if newEp.RecordType == "MX" || newEp.RecordType == "SRV" {
-			record.Priority = 10
+		if priority, ok := recordPriority(newEp.RecordType, target); ok {
+			record.Priority = priority
 		}
 
 		if _, err := p.client.CreateRecord(ctx, zoneFQDN, record); err != nil {
@@ -354,9 +380,15 @@ func (p *Provider) updateRecord(ctx context.Context, _, newEp *endpoint.Endpoint
 		slog.Info("Updated record (added target)", "source", source, "record_type", newEp.RecordType, "target", target)
 	}
 
-	// Delete rows whose target is no longer desired.
-	for target, record := range existing {
+	// Delete rows for targets ExternalDNS previously owned (oldEp) that are no longer
+	// desired. Sourcing deletions from oldEp keeps us within ExternalDNS's ownership.
+	for _, target := range oldEp.Targets {
 		if desired[target] {
+			continue
+		}
+
+		record, ok := existing[target]
+		if !ok {
 			continue
 		}
 
