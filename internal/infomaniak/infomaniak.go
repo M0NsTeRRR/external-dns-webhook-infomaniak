@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"sigs.k8s.io/external-dns/endpoint"
@@ -189,23 +188,6 @@ func normalizeReadTarget(recordType, target string) string {
 	return target
 }
 
-// recordPriority extracts the priority MX and SRV records carry as the leading
-// field of their target (e.g. "10 mail.example.com." or "0 5 5060 sip.example.com."),
-// so it can be sent in Infomaniak's dedicated priority field instead of a hard-coded
-// value. Returns false for other types or a non-numeric leading field.
-func recordPriority(recordType, target string) (int, bool) {
-	switch recordType {
-	case "MX", "SRV":
-		if fields := strings.Fields(target); len(fields) > 0 {
-			if priority, err := strconv.Atoi(fields[0]); err == nil {
-				return priority, true
-			}
-		}
-	}
-
-	return 0, false
-}
-
 // unquoteTXT joins the one or more double-quoted character-strings Infomaniak
 // returns for a TXT value into the raw value ExternalDNS holds (values over 255
 // bytes come back split into several quoted chunks). Unquoted input is returned
@@ -307,11 +289,6 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 			TTL:    max(int(ep.RecordTTL), minTTL),
 		}
 
-		// MX/SRV carry their priority in the target; send it in the priority field.
-		if priority, ok := recordPriority(ep.RecordType, target); ok {
-			record.Priority = priority
-		}
-
 		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
 		if err != nil {
 			return err
@@ -368,9 +345,6 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 			Type:   newEp.RecordType,
 			Target: target,
 			TTL:    max(int(newEp.RecordTTL), minTTL),
-		}
-		if priority, ok := recordPriority(newEp.RecordType, target); ok {
-			record.Priority = priority
 		}
 
 		if _, err := p.client.CreateRecord(ctx, zoneFQDN, record); err != nil {
