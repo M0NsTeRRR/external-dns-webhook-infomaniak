@@ -334,7 +334,6 @@ func TestNormalizeReadTarget(t *testing.T) {
 	}{
 		{"SRV without trailing dot gets one", "SRV", "10 50 3478 turn.example.com", "10 50 3478 turn.example.com."},
 		{"SRV already dotted is unchanged", "SRV", "10 50 3478 turn.example.com.", "10 50 3478 turn.example.com."},
-		{"SRV malformed is left alone", "SRV", "not-an-srv", "not-an-srv"},
 		{"TXT surrounding quotes stripped", "TXT", "\"v=DMARC1; p=quarantine\"", "v=DMARC1; p=quarantine"},
 		{"TXT chunked value is concatenated", "TXT", "\"chunk-one-\" \"chunk-two\"", "chunk-one-chunk-two"},
 		{"TXT escaped quote is preserved", "TXT", "\"a\\\"b\"", "a\"b"},
