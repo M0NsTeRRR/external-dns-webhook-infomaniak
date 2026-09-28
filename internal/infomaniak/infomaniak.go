@@ -405,17 +405,15 @@ func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
 
-	deleted := false
 	for _, record := range records {
 		if err := p.client.DeleteRecord(ctx, zoneFQDN, record.ID); err != nil {
 			return err
 		}
-		deleted = true
 
 		slog.Info("Deleted record", "source", source, "record_type", ep.RecordType, "target", record.Target)
 	}
 
-	if !deleted {
+	if len(records) == 0 {
 		// Record already doesn't exist, consider this a success.
 		slog.Warn("Record not found for deletion", "source", source, "record_type", ep.RecordType)
 	}
