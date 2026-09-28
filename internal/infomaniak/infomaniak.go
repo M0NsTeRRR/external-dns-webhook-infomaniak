@@ -40,29 +40,27 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 		return nil, err
 	}
 
-	slog.Debug(fmt.Sprintf("Found %d domains", len(domains)))
+	slog.Debug("Found domains", "count", len(domains))
 
 	// For each domain, get zones and records
 	for _, domain := range domains {
 		// Apply domain filter if specified
 		if p.domainFilter != nil && !p.domainFilter.Match(domain.Name) {
-			slog.Debug(fmt.Sprintf("Skipping domain %s due to domain filter", domain.Name))
+			slog.Debug("Skipping domain", "name", domain.Name)
 			continue
 		}
 
 		// Get zones for this domain
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(err.Error())
-			continue
+			return nil, err
 		}
 
 		for _, zone := range zones {
 			// Get records for this zone
 			records, err := p.client.GetRecords(ctx, zone.FQDN)
 			if err != nil {
-				slog.Warn(err.Error())
-				continue
+				return nil, err
 			}
 
 			slog.Debug(fmt.Sprintf("Found %d records for zone %s", len(records), zone.FQDN))
@@ -250,8 +248,7 @@ func (p *Provider) findZoneForEndpoint(ctx context.Context, ep *endpoint.Endpoin
 	for _, domain := range domains {
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(err.Error())
-			continue
+			return "", err
 		}
 
 		for _, zone := range zones {
@@ -331,7 +328,7 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 
 	source := extractRecordSource(oldEp.DNSName, zoneFQDN)
 
-	records, err := p.findRecords(ctx, zoneFQDN, source, newEp.RecordType)
+	records, err := p.findRecords(ctx, zoneFQDN, source, oldEp.RecordType)
 	if err != nil {
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
@@ -348,24 +345,35 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 		desired[target] = true
 	}
 
+	ttl := max(int(newEp.RecordTTL), minTTL)
+
 	// Create rows for desired targets that do not exist yet.
 	for _, target := range newEp.Targets {
-		if _, ok := existing[target]; ok {
-			continue
-		}
-
 		record := RecordRequest{
 			Source: source,
 			Type:   newEp.RecordType,
 			Target: target,
-			TTL:    max(int(newEp.RecordTTL), minTTL),
+			TTL:    ttl,
 		}
 
-		if _, err := p.client.CreateRecord(ctx, zoneFQDN, record); err != nil {
-			return err
+		row, ok := existing[target]
+		if !ok {
+			if _, err := p.client.CreateRecord(ctx, zoneFQDN, record); err != nil {
+				return err
+			}
+
+			slog.Info("Updated record (added target)", "source", source, "record_type", newEp.RecordType, "target", target)
+			continue
 		}
 
-		slog.Info("Updated record (added target)", "source", source, "record_type", newEp.RecordType, "target", target)
+		if max(row.TTL, minTTL) != ttl {
+			if _, err := p.client.UpdateRecord(ctx, zoneFQDN, row.ID, record); err != nil {
+				return err
+			}
+
+			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", ttl)
+		}
+
 	}
 
 	// Delete rows for targets ExternalDNS previously owned (oldEp) that are no longer

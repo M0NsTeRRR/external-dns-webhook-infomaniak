@@ -268,6 +268,71 @@ func TestProviderUpdateRecord(t *testing.T) {
 	assert.False(t, deletedSharedRecord, "Shared target (id 11) must be left untouched")
 }
 
+func TestProviderUpdateRecordTTLChange(t *testing.T) {
+	tests := []struct {
+		name   string
+		oldTTL endpoint.TTL
+		newTTL endpoint.TTL
+	}{
+		{"TTL increased", 300, 600},
+		{"TTL decreased", 300, 120},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var updatedRequest RecordRequest
+			updated := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+
+				switch {
+				case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
+					require.NoError(t, json.NewEncoder(w).Encode(DomainListResponse{
+						Result: "success",
+						Data:   []InfomaniakDomain{{Name: "example.com"}},
+					}))
+				case r.URL.Path == "/2/domains/domains/example.com/zones" && r.Method == "GET":
+					require.NoError(t, json.NewEncoder(w).Encode(ZoneListResponse{
+						Result: "success",
+						Data:   []InfomaniakZone{{FQDN: "example.com"}},
+					}))
+				case r.URL.Path == "/2/zones/example.com/records" && r.Method == "GET":
+					require.NoError(t, json.NewEncoder(w).Encode(RecordListResponse{
+						Result: "success",
+						Data:   []InfomaniakRecord{{ID: 10, Source: "www", Type: "A", Target: "192.0.2.1", TTL: int(tt.oldTTL)}},
+					}))
+				case r.URL.Path == "/2/zones/example.com/records/10" && r.Method == "PUT":
+					updated = true
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&updatedRequest))
+					require.NoError(t, json.NewEncoder(w).Encode(RecordCreateResponse{
+						Result: "success",
+						Data:   InfomaniakRecord{ID: 10},
+					}))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			client := NewInfomaniakClient(&Config{APIToken: "test-token", DryRun: false})
+			client.baseURL = server.URL
+			provider := &Provider{client: client, dryRun: false, domainFilter: nil}
+
+			// Same target, only the TTL changes.
+			changes := &plan.Changes{
+				UpdateOld: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", tt.oldTTL, "192.0.2.1")},
+				UpdateNew: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", tt.newTTL, "192.0.2.1")},
+			}
+
+			require.NoError(t, provider.ApplyChanges(context.Background(), changes))
+
+			assert.True(t, updated, "Expected row 10 to be updated in place")
+			assert.Equal(t, int(tt.newTTL), updatedRequest.TTL)
+			assert.Equal(t, "192.0.2.1", updatedRequest.Target)
+		})
+	}
+}
+
 func TestProviderAdjustEndpoints(t *testing.T) {
 	provider := &Provider{}
 
