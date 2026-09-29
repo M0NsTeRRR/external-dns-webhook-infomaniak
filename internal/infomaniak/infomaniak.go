@@ -313,13 +313,13 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 	return nil
 }
 
-// updateRecord applies a change as the delta between the old and new target sets:
-// Infomaniak keeps one row per target, so rows for added targets are created and
-// rows for removed targets deleted, leaving shared ones untouched. Deletions are
-// derived from oldEp — the set ExternalDNS previously owned — never from the live
-// records, so entries another tool manages in the same zone are left alone (they
-// are never in oldEp). Live records are read only to resolve a target to its row ID
-// and to avoid recreating one that already exists.
+// updateRecord applies a change as the delta between the old and new target sets.
+// Infomaniak keeps one row per target: rows for removed targets are deleted first
+// (a name cannot hold two CNAMEs, so the old row must go before the new one is
+// created), rows for added targets are created, and rows whose TTL differs are
+// updated in place. Deletions are derived from oldEp — the set ExternalDNS
+// previously owned — never from the live records. Live records are read only to
+// resolve a target to its row ID and to avoid recreating one that already exists.
 func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endpoint) error {
 	zoneFQDN, err := p.findZoneForEndpoint(ctx, oldEp)
 	if err != nil {
