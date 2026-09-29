@@ -254,8 +254,8 @@ func TestProviderUpdateRecord(t *testing.T) {
 
 	// Current targets {192.0.2.1, 192.0.2.2}; desired {192.0.2.2, 192.0.2.3}.
 	changes := &plan.Changes{
-		UpdateOld: []*endpoint.Endpoint{endpoint.NewEndpoint("www.example.com", "A", "192.0.2.1", "192.0.2.2")},
-		UpdateNew: []*endpoint.Endpoint{endpoint.NewEndpoint("www.example.com", "A", "192.0.2.2", "192.0.2.3")},
+		UpdateOld: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", 300, "192.0.2.1", "192.0.2.2")},
+		UpdateNew: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", 300, "192.0.2.2", "192.0.2.3")},
 	}
 
 	err := provider.ApplyChanges(context.Background(), changes)

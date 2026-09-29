@@ -299,7 +299,7 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 			Source: source,
 			Type:   ep.RecordType,
 			Target: target,
-			TTL:    max(int(ep.RecordTTL), minTTL),
+			TTL:    int(ep.RecordTTL),
 		}
 
 		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
@@ -345,15 +345,13 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 		desired[target] = true
 	}
 
-	ttl := max(int(newEp.RecordTTL), minTTL)
-
 	// Create rows for desired targets that do not exist yet.
 	for _, target := range newEp.Targets {
 		record := RecordRequest{
 			Source: source,
 			Type:   newEp.RecordType,
 			Target: target,
-			TTL:    ttl,
+			TTL:    int(newEp.RecordTTL),
 		}
 
 		row, ok := existing[target]
@@ -366,12 +364,12 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 			continue
 		}
 
-		if max(row.TTL, minTTL) != ttl {
+		if row.TTL != int(newEp.RecordTTL) {
 			if _, err := p.client.UpdateRecord(ctx, zoneFQDN, row.ID, record); err != nil {
 				return err
 			}
 
-			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", ttl)
+			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", newEp.RecordTTL)
 		}
 
 	}
