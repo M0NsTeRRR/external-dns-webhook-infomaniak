@@ -345,6 +345,25 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 		desired[target] = true
 	}
 
+	// Delete rows for targets ExternalDNS previously owned (oldEp) that are no longer
+	// desired. Sourcing deletions from oldEp keeps us within ExternalDNS's ownership.
+	for _, target := range oldEp.Targets {
+		if desired[target] {
+			continue
+		}
+
+		record, ok := existing[target]
+		if !ok {
+			continue
+		}
+
+		if err := p.client.DeleteRecord(ctx, zoneFQDN, record.ID); err != nil {
+			return err
+		}
+
+		slog.Info("Updated record (removed target)", "source", source, "record_type", newEp.RecordType, "target", target)
+	}
+
 	// Create rows for desired targets that do not exist yet.
 	for _, target := range newEp.Targets {
 		record := RecordRequest{
@@ -372,25 +391,6 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", newEp.RecordTTL)
 		}
 
-	}
-
-	// Delete rows for targets ExternalDNS previously owned (oldEp) that are no longer
-	// desired. Sourcing deletions from oldEp keeps us within ExternalDNS's ownership.
-	for _, target := range oldEp.Targets {
-		if desired[target] {
-			continue
-		}
-
-		record, ok := existing[target]
-		if !ok {
-			continue
-		}
-
-		if err := p.client.DeleteRecord(ctx, zoneFQDN, record.ID); err != nil {
-			return err
-		}
-
-		slog.Info("Updated record (removed target)", "source", source, "record_type", newEp.RecordType, "target", target)
 	}
 
 	return nil
