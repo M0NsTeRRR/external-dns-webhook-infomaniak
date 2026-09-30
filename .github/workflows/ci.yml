@@ -32,13 +32,13 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     strategy:
       matrix:
         go:
-          - "1.26"
+          - "1.27"
     steps:
       - parallel:
         - name: Checkout code
@@ -65,10 +65,10 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
           - os: linux
             arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
     steps:
       - parallel:
         - name: Checkout code
@@ -77,13 +77,13 @@ jobs:
             persist-credentials: false
 
         - name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+          uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Get Git commit timestamps
         run: echo "TIMESTAMP=$(git log -1 --pretty=%ct)" >> $GITHUB_ENV
 
       - name: Build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
           push: false
