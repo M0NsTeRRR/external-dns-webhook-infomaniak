@@ -196,6 +196,143 @@ func TestProviderDeleteRecord(t *testing.T) {
 	assert.True(t, deletedRecord, "Expected record to be deleted")
 }
 
+func TestProviderUpdateRecord(t *testing.T) {
+	createdRecord := false
+	deletedRecord := false
+	deletedSharedRecord := false
+	var createdRequest RecordRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
+			response := DomainListResponse{
+				Result: "success",
+				Data:   []InfomaniakDomain{{Name: "example.com"}},
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		case r.URL.Path == "/2/domains/domains/example.com/zones" && r.Method == "GET":
+			response := ZoneListResponse{
+				Result: "success",
+				Data:   []InfomaniakZone{{FQDN: "example.com"}},
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		case r.URL.Path == "/2/zones/example.com/records" && r.Method == "GET":
+			response := RecordListResponse{
+				Result: "success",
+				Data: []InfomaniakRecord{
+					{ID: 10, Source: "www", Type: "A", Target: "192.0.2.1", TTL: 300},
+					{ID: 11, Source: "www", Type: "A", Target: "192.0.2.2", TTL: 300},
+				},
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		case r.URL.Path == "/2/zones/example.com/records" && r.Method == "POST":
+			createdRecord = true
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&createdRequest))
+			response := RecordCreateResponse{Result: "success", Data: InfomaniakRecord{ID: 12}}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		case r.URL.Path == "/2/zones/example.com/records/10" && r.Method == "DELETE":
+			deletedRecord = true
+			response := APIResponse{Result: "success"}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		case r.URL.Path == "/2/zones/example.com/records/11" && r.Method == "DELETE":
+			deletedSharedRecord = true
+			response := APIResponse{Result: "success"}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+
+	provider := &Provider{client: client, dryRun: false, domainFilter: nil}
+
+	// Current targets {192.0.2.1, 192.0.2.2}; desired {192.0.2.2, 192.0.2.3}.
+	changes := &plan.Changes{
+		UpdateOld: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", 300, "192.0.2.1", "192.0.2.2")},
+		UpdateNew: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", 300, "192.0.2.2", "192.0.2.3")},
+	}
+
+	err := provider.ApplyChanges(context.Background(), changes)
+
+	require.NoError(t, err)
+	assert.True(t, createdRecord, "Expected new target to be created")
+	assert.Equal(t, "192.0.2.3", createdRequest.Target)
+	assert.Equal(t, "www", createdRequest.Source)
+	assert.True(t, deletedRecord, "Expected removed target (id 10) to be deleted")
+	assert.False(t, deletedSharedRecord, "Shared target (id 11) must be left untouched")
+}
+
+func TestProviderUpdateRecordTTLChange(t *testing.T) {
+	tests := []struct {
+		name   string
+		oldTTL endpoint.TTL
+		newTTL endpoint.TTL
+	}{
+		{"TTL increased", 300, 600},
+		{"TTL decreased", 300, 120},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var updatedRequest RecordRequest
+			updated := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+
+				switch {
+				case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
+					require.NoError(t, json.NewEncoder(w).Encode(DomainListResponse{
+						Result: "success",
+						Data:   []InfomaniakDomain{{Name: "example.com"}},
+					}))
+				case r.URL.Path == "/2/domains/domains/example.com/zones" && r.Method == "GET":
+					require.NoError(t, json.NewEncoder(w).Encode(ZoneListResponse{
+						Result: "success",
+						Data:   []InfomaniakZone{{FQDN: "example.com"}},
+					}))
+				case r.URL.Path == "/2/zones/example.com/records" && r.Method == "GET":
+					require.NoError(t, json.NewEncoder(w).Encode(RecordListResponse{
+						Result: "success",
+						Data:   []InfomaniakRecord{{ID: 10, Source: "www", Type: "A", Target: "192.0.2.1", TTL: int(tt.oldTTL)}},
+					}))
+				case r.URL.Path == "/2/zones/example.com/records/10" && r.Method == "PUT":
+					updated = true
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&updatedRequest))
+					require.NoError(t, json.NewEncoder(w).Encode(RecordCreateResponse{
+						Result: "success",
+						Data:   InfomaniakRecord{ID: 10},
+					}))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			client := NewInfomaniakClient(&Config{APIToken: "test-token", DryRun: false})
+			client.baseURL = server.URL
+			provider := &Provider{client: client, dryRun: false, domainFilter: nil}
+
+			// Same target, only the TTL changes.
+			changes := &plan.Changes{
+				UpdateOld: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", tt.oldTTL, "192.0.2.1")},
+				UpdateNew: []*endpoint.Endpoint{endpoint.NewEndpointWithTTL("www.example.com", "A", tt.newTTL, "192.0.2.1")},
+			}
+
+			require.NoError(t, provider.ApplyChanges(context.Background(), changes))
+
+			assert.True(t, updated, "Expected row 10 to be updated in place")
+			assert.Equal(t, int(tt.newTTL), updatedRequest.TTL)
+			assert.Equal(t, "192.0.2.1", updatedRequest.Target)
+		})
+	}
+}
+
 func TestProviderAdjustEndpoints(t *testing.T) {
 	provider := &Provider{}
 
@@ -323,4 +460,144 @@ func TestHelperFunctions(t *testing.T) {
 		assert.Equal(t, "www", extractRecordSource("www.example.com", "example.com"))
 		assert.Equal(t, "sub.domain", extractRecordSource("sub.domain.example.com", "example.com"))
 	})
+}
+
+func TestNormalizeReadTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		recordType string
+		target     string
+		want       string
+	}{
+		{"SRV without trailing dot gets one", "SRV", "10 50 3478 turn.example.com", "10 50 3478 turn.example.com."},
+		{"SRV already dotted is unchanged", "SRV", "10 50 3478 turn.example.com.", "10 50 3478 turn.example.com."},
+		{"TXT surrounding quotes stripped", "TXT", "\"v=DMARC1; p=quarantine\"", "v=DMARC1; p=quarantine"},
+		{"TXT chunked value is concatenated", "TXT", "\"chunk-one-\" \"chunk-two\"", "chunk-one-chunk-two"},
+		{"TXT escaped quote is preserved", "TXT", "\"a\\\"b\"", "a\"b"},
+		{"TXT without quotes is unchanged", "TXT", "v=spf1 -all", "v=spf1 -all"},
+		{"A record is untouched", "A", "192.0.2.1", "192.0.2.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeReadTarget(tt.recordType, tt.target))
+		})
+	}
+}
+
+func TestProviderRecordsNormalizesSRVAndTXT(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/2/domains/domains":
+			require.NoError(t, json.NewEncoder(w).Encode(DomainListResponse{
+				Result: "success",
+				Data:   []InfomaniakDomain{{Name: "example.com"}},
+			}))
+		case "/2/domains/domains/example.com/zones":
+			require.NoError(t, json.NewEncoder(w).Encode(ZoneListResponse{
+				Result: "success",
+				Data:   []InfomaniakZone{{FQDN: "example.com"}},
+			}))
+		case "/2/zones/example.com/records":
+			// The Infomaniak API returns SRV targets without a trailing dot and TXT
+			// values wrapped in literal quotes; Records() must normalize both so the
+			// endpoints match what ExternalDNS holds (otherwise they churn forever).
+			require.NoError(t, json.NewEncoder(w).Encode(RecordListResponse{
+				Result: "success",
+				Data: []InfomaniakRecord{
+					{ID: 1, Source: "_sip._tcp", Type: "SRV", Target: "10 50 3478 turn.example.com", TTL: 3600},
+					{ID: 2, Source: "_dmarc", Type: "TXT", Target: "\"v=DMARC1; p=quarantine\"", TTL: 3600},
+				},
+			}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+
+	provider := &Provider{client: client, dryRun: false, domainFilter: nil}
+
+	endpoints, err := provider.Records(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, endpoints, 2)
+
+	byType := map[string]*endpoint.Endpoint{}
+	for _, ep := range endpoints {
+		byType[ep.RecordType] = ep
+	}
+
+	require.Contains(t, byType, "SRV")
+	assert.Equal(t, "10 50 3478 turn.example.com.", byType["SRV"].Targets[0])
+
+	require.Contains(t, byType, "TXT")
+	assert.Equal(t, "v=DMARC1; p=quarantine", byType["TXT"].Targets[0])
+}
+
+func TestProviderRecordsMergesMultiTargetRecords(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/2/domains/domains":
+			require.NoError(t, json.NewEncoder(w).Encode(DomainListResponse{
+				Result: "success",
+				Data:   []InfomaniakDomain{{Name: "example.com"}},
+			}))
+		case "/2/domains/domains/example.com/zones":
+			require.NoError(t, json.NewEncoder(w).Encode(ZoneListResponse{
+				Result: "success",
+				Data:   []InfomaniakZone{{FQDN: "example.com"}},
+			}))
+		case "/2/zones/example.com/records":
+			// Infomaniak stores one row per target; a name with several targets
+			// (round-robin A, multiple MX) and a long TXT split into 255-byte chunks
+			// must collapse into one endpoint each, or they churn every reconcile.
+			require.NoError(t, json.NewEncoder(w).Encode(RecordListResponse{
+				Result: "success",
+				Data: []InfomaniakRecord{
+					{ID: 1, Source: ".", Type: "A", Target: "192.0.2.1", TTL: 300},
+					{ID: 2, Source: ".", Type: "A", Target: "192.0.2.2", TTL: 300},
+					{ID: 3, Source: ".", Type: "MX", Target: "10 mx1.example.com", TTL: 300},
+					{ID: 4, Source: ".", Type: "MX", Target: "10 mx2.example.com", TTL: 300},
+					{ID: 5, Source: "sel._domainkey", Type: "TXT", Target: "\"part-one-\" \"part-two\"", TTL: 300},
+				},
+			}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := &Config{APIToken: "test-token", DryRun: false}
+	client := NewInfomaniakClient(config)
+	client.baseURL = server.URL
+
+	provider := &Provider{client: client, dryRun: false, domainFilter: nil}
+
+	endpoints, err := provider.Records(context.Background())
+	require.NoError(t, err)
+
+	byType := map[string]*endpoint.Endpoint{}
+	for _, ep := range endpoints {
+		byType[ep.RecordType] = ep
+	}
+
+	// One endpoint per (name, type), not one per row.
+	require.Len(t, endpoints, 3)
+
+	require.Contains(t, byType, "A")
+	assert.ElementsMatch(t, []string{"192.0.2.1", "192.0.2.2"}, byType["A"].Targets)
+
+	require.Contains(t, byType, "MX")
+	assert.ElementsMatch(t, []string{"10 mx1.example.com", "10 mx2.example.com"}, byType["MX"].Targets)
+
+	require.Contains(t, byType, "TXT")
+	require.Len(t, byType["TXT"].Targets, 1)
+	assert.Equal(t, "part-one-part-two", byType["TXT"].Targets[0])
 }

@@ -12,12 +12,11 @@ type InfomaniakZone struct {
 
 // InfomaniakRecord represents a DNS record from the v2 API
 type InfomaniakRecord struct {
-	ID       int    `json:"id"`
-	Source   string `json:"source"`
-	Type     string `json:"type"`
-	TTL      int    `json:"ttl"`
-	Target   string `json:"target"`
-	Priority int    `json:"priority,omitempty"`
+	ID     int    `json:"id"`
+	Source string `json:"source"`
+	Type   string `json:"type"`
+	TTL    int    `json:"ttl"`
+	Target string `json:"target"`
 }
 
 // APIResponse represents a generic v2 API response
@@ -57,9 +56,8 @@ type RecordCreateResponse struct {
 
 // RecordRequest represents the request body for creating/updating a record
 type RecordRequest struct {
-	Source   string `json:"source"`
-	Type     string `json:"type"`
-	Target   string `json:"target"`
-	TTL      int    `json:"ttl"`
-	Priority int    `json:"priority,omitempty"`
+	Source string `json:"source"`
+	Type   string `json:"type"`
+	Target string `json:"target"`
+	TTL    int    `json:"ttl"`
 }

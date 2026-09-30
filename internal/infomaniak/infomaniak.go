@@ -40,39 +40,32 @@ func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
 		return nil, err
 	}
 
-	slog.Debug(fmt.Sprintf("Found %d domains", len(domains)))
+	slog.Debug("Found domains", "count", len(domains))
 
 	// For each domain, get zones and records
 	for _, domain := range domains {
 		// Apply domain filter if specified
 		if p.domainFilter != nil && !p.domainFilter.Match(domain.Name) {
-			slog.Debug(fmt.Sprintf("Skipping domain %s due to domain filter", domain.Name))
+			slog.Debug("Skipping domain", "name", domain.Name)
 			continue
 		}
 
 		// Get zones for this domain
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(err.Error())
-			continue
+			return nil, err
 		}
 
 		for _, zone := range zones {
 			// Get records for this zone
 			records, err := p.client.GetRecords(ctx, zone.FQDN)
 			if err != nil {
-				slog.Warn(err.Error())
-				continue
+				return nil, err
 			}
 
 			slog.Debug(fmt.Sprintf("Found %d records for zone %s", len(records), zone.FQDN))
 
-			for _, record := range records {
-				// Convert record to endpoint
-				if ep := recordToEndpoint(record, zone.FQDN); ep != nil {
-					endpoints = append(endpoints, ep)
-				}
-			}
+			endpoints = append(endpoints, mergeRecords(records, zone.FQDN)...)
 		}
 	}
 
@@ -130,12 +123,94 @@ func (p *Provider) AdjustEndpoints(endpoints []*endpoint.Endpoint) ([]*endpoint.
 	return endpoints, nil
 }
 
-// recordToEndpoint converts an Infomaniak record to an ExternalDNS endpoint.
+// mergeRecords converts Infomaniak records into ExternalDNS endpoints, collapsing
+// rows that share a name and type into one multi-target endpoint. Infomaniak keeps
+// a separate row per target, so without this multi-target records (round-robin A,
+// multiple MX) would look out of date and churn on every reconcile.
+func mergeRecords(records []InfomaniakRecord, zoneFQDN string) []*endpoint.Endpoint {
+	byKey := make(map[string]*endpoint.Endpoint)
+	var order []string
+
+	for _, record := range records {
+		key := ensureFQDN(record.Source, zoneFQDN) + "/" + record.Type
+		// The first row for a name/type builds the endpoint; later rows just add
+		// their target to it.
+		if ep, ok := byKey[key]; ok {
+			ep.Targets = append(ep.Targets, normalizeReadTarget(record.Type, record.Target))
+		} else {
+			byKey[key] = recordToEndpoint(record, zoneFQDN)
+			order = append(order, key)
+		}
+	}
+
+	endpoints := make([]*endpoint.Endpoint, 0, len(order))
+	for _, key := range order {
+		endpoints = append(endpoints, byKey[key])
+	}
+
+	return endpoints
+}
+
+// recordToEndpoint converts a single Infomaniak record to an ExternalDNS endpoint.
 func recordToEndpoint(r InfomaniakRecord, zoneFQDN string) *endpoint.Endpoint {
 	dnsName := ensureFQDN(r.Source, zoneFQDN)
 	// Normalize TTL to match what we send to the API
 	ttl := max(r.TTL, minTTL)
-	return endpoint.NewEndpointWithTTL(dnsName, r.Type, endpoint.TTL(ttl), r.Target)
+	target := normalizeReadTarget(r.Type, r.Target)
+
+	return endpoint.NewEndpointWithTTL(dnsName, r.Type, endpoint.TTL(ttl), target)
+}
+
+// normalizeReadTarget converts a target from Infomaniak's read form to the one
+// ExternalDNS holds, so managed records don't look perpetually changed: SRV
+// targets get their trailing dot (RFC 2782), and TXT values are unquoted with
+// their 255-byte chunks joined.
+func normalizeReadTarget(recordType, target string) string {
+	switch recordType {
+	case "SRV":
+		// SRV target is "priority weight port host"; ensure the host ends with a
+		// dot per RFC 2782. Infomaniak's API returns the four fields; a malformed
+		// value is an upstream bug and should surface rather than be masked here.
+		fields := strings.Fields(target)
+		if !strings.HasSuffix(fields[3], ".") {
+			fields[3] += "."
+
+			return strings.Join(fields, " ")
+		}
+	case "TXT":
+		return unquoteTXT(target)
+	}
+
+	return target
+}
+
+// unquoteTXT joins the one or more double-quoted character-strings Infomaniak
+// returns for a TXT value into the raw value ExternalDNS holds (values over 255
+// bytes come back split into several quoted chunks). Unquoted input is returned
+// unchanged.
+func unquoteTXT(target string) string {
+	if !strings.HasPrefix(target, `"`) {
+		return target
+	}
+
+	var b strings.Builder
+	inQuotes := false
+	escaped := false
+	for _, r := range target {
+		switch {
+		case escaped:
+			b.WriteRune(r)
+			escaped = false
+		case r == '\\' && inQuotes:
+			escaped = true
+		case r == '"':
+			inQuotes = !inQuotes
+		case inQuotes:
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
 }
 
 // ensureFQDN ensures the record name is a fully qualified domain name.
@@ -173,8 +248,7 @@ func (p *Provider) findZoneForEndpoint(ctx context.Context, ep *endpoint.Endpoin
 	for _, domain := range domains {
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			slog.Warn(err.Error())
-			continue
+			return "", err
 		}
 
 		for _, zone := range zones {
@@ -193,20 +267,22 @@ func (p *Provider) findZoneForEndpoint(ctx context.Context, ep *endpoint.Endpoin
 	return bestMatch, nil
 }
 
-// findRecord finds an existing record matching the endpoint
-func (p *Provider) findRecord(ctx context.Context, zoneFQDN string, source, recordType string) (*InfomaniakRecord, error) {
+// findRecords returns the live Infomaniak rows for a given source and record type
+// in a zone. Infomaniak keeps one row per target, so this may return several.
+func (p *Provider) findRecords(ctx context.Context, zoneFQDN, source, recordType string) ([]InfomaniakRecord, error) {
 	records, err := p.client.GetRecords(ctx, zoneFQDN)
 	if err != nil {
 		return nil, err
 	}
 
+	var matches []InfomaniakRecord
 	for _, record := range records {
 		if record.Source == source && record.Type == recordType {
-			return &record, nil
+			matches = append(matches, record)
 		}
 	}
 
-	return nil, nil
+	return matches, nil
 }
 
 // createRecord creates a new DNS record.
@@ -223,12 +299,7 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 			Source: source,
 			Type:   ep.RecordType,
 			Target: target,
-			TTL:    max(int(ep.RecordTTL), minTTL),
-		}
-
-		// Set priority for MX and SRV records
-		if ep.RecordType == "MX" || ep.RecordType == "SRV" {
-			record.Priority = 10
+			TTL:    int(ep.RecordTTL),
 		}
 
 		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
@@ -242,7 +313,13 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 	return nil
 }
 
-// updateRecord updates an existing DNS record.
+// updateRecord applies a change as the delta between the old and new target sets.
+// Infomaniak keeps one row per target: rows for removed targets are deleted first
+// (a name cannot hold two CNAMEs, so the old row must go before the new one is
+// created), rows for added targets are created, and rows whose TTL differs are
+// updated in place. Deletions are derived from oldEp — the set ExternalDNS
+// previously owned — never from the live records. Live records are read only to
+// resolve a target to its row ID and to avoid recreating one that already exists.
 func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endpoint) error {
 	zoneFQDN, err := p.findZoneForEndpoint(ctx, oldEp)
 	if err != nil {
@@ -251,41 +328,76 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 
 	source := extractRecordSource(oldEp.DNSName, zoneFQDN)
 
-	// Find the existing record
-	existingRecord, err := p.findRecord(ctx, zoneFQDN, source, oldEp.RecordType)
+	records, err := p.findRecords(ctx, zoneFQDN, source, oldEp.RecordType)
 	if err != nil {
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
 
-	if existingRecord == nil {
-		return fmt.Errorf("record not found for update: %s %s", source, oldEp.RecordType)
+	// Index live rows by normalized target, matching ExternalDNS's representation,
+	// so a target can be resolved to its row.
+	existing := make(map[string]InfomaniakRecord)
+	for _, record := range records {
+		existing[normalizeReadTarget(record.Type, record.Target)] = record
 	}
 
-	// Update with new values
-	record := RecordRequest{
-		Source: source,
-		Type:   newEp.RecordType,
-		Target: newEp.Targets[0],
-		TTL:    max(int(newEp.RecordTTL), minTTL),
+	desired := make(map[string]bool, len(newEp.Targets))
+	for _, target := range newEp.Targets {
+		desired[target] = true
 	}
 
-	if newEp.RecordType == "MX" || newEp.RecordType == "SRV" {
-		record.Priority = existingRecord.Priority
-		if record.Priority == 0 {
-			record.Priority = 10
+	// Delete rows for targets ExternalDNS previously owned (oldEp) that are no longer
+	// desired. Sourcing deletions from oldEp keeps us within ExternalDNS's ownership.
+	for _, target := range oldEp.Targets {
+		if desired[target] {
+			continue
 		}
+
+		record, ok := existing[target]
+		if !ok {
+			continue
+		}
+
+		if err := p.client.DeleteRecord(ctx, zoneFQDN, record.ID); err != nil {
+			return err
+		}
+
+		slog.Info("Updated record (removed target)", "source", source, "record_type", newEp.RecordType, "target", target)
 	}
 
-	_, err = p.client.UpdateRecord(ctx, zoneFQDN, existingRecord.ID, record)
-	if err != nil {
-		return err
+	// Create rows for desired targets that do not exist yet.
+	for _, target := range newEp.Targets {
+		record := RecordRequest{
+			Source: source,
+			Type:   newEp.RecordType,
+			Target: target,
+			TTL:    int(newEp.RecordTTL),
+		}
+
+		row, ok := existing[target]
+		if !ok {
+			if _, err := p.client.CreateRecord(ctx, zoneFQDN, record); err != nil {
+				return err
+			}
+
+			slog.Info("Updated record (added target)", "source", source, "record_type", newEp.RecordType, "target", target)
+			continue
+		}
+
+		if row.TTL != int(newEp.RecordTTL) {
+			if _, err := p.client.UpdateRecord(ctx, zoneFQDN, row.ID, record); err != nil {
+				return err
+			}
+
+			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", newEp.RecordTTL)
+		}
+
 	}
 
-	slog.Info("Updated record", "source", source, "record_type", newEp.RecordType, "target", newEp.Targets[0])
 	return nil
 }
 
-// deleteRecord deletes a DNS record.
+// deleteRecord deletes a DNS record. Every Infomaniak row for the endpoint's
+// (source, type) is removed, so multi-target records are deleted in full.
 func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint) error {
 	zoneFQDN, err := p.findZoneForEndpoint(ctx, ep)
 	if err != nil {
@@ -294,24 +406,24 @@ func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 
 	source := extractRecordSource(ep.DNSName, zoneFQDN)
 
-	// Find the existing record
-	existingRecord, err := p.findRecord(ctx, zoneFQDN, source, ep.RecordType)
+	records, err := p.findRecords(ctx, zoneFQDN, source, ep.RecordType)
 	if err != nil {
 		return fmt.Errorf("failed to get existing records: %w", err)
 	}
 
-	if existingRecord == nil {
-		// Record already doesn't exist, consider this a success
+	for _, record := range records {
+		if err := p.client.DeleteRecord(ctx, zoneFQDN, record.ID); err != nil {
+			return err
+		}
+
+		slog.Info("Deleted record", "source", source, "record_type", ep.RecordType, "target", record.Target)
+	}
+
+	if len(records) == 0 {
+		// Record already doesn't exist, consider this a success.
 		slog.Warn("Record not found for deletion", "source", source, "record_type", ep.RecordType)
-		return nil
 	}
 
-	err = p.client.DeleteRecord(ctx, zoneFQDN, existingRecord.ID)
-	if err != nil {
-		return err
-	}
-
-	slog.Info("Deleted record", "source", source, "record_type", ep.RecordType)
 	return nil
 }
 
