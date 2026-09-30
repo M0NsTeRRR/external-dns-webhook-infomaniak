@@ -17,7 +17,6 @@ type InfomaniakRecord struct {
 	Type     string `json:"type"`
 	TTL      int    `json:"ttl"`
 	Target   string `json:"target"`
-	Priority int    `json:"priority,omitempty"`
 }
 
 // APIResponse represents a generic v2 API response
@@ -61,5 +60,4 @@ type RecordRequest struct {
 	Type     string `json:"type"`
 	Target   string `json:"target"`
 	TTL      int    `json:"ttl"`
-	Priority int    `json:"priority,omitempty"`
 }
