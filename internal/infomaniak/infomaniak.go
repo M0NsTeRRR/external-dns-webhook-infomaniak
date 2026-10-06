@@ -32,41 +32,23 @@ func NewInfomaniakProvider(domainFilter endpoint.DomainFilterInterface, configur
 
 // Records returns the list of resource records in all zones.
 func (p *Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
-	var endpoints []*endpoint.Endpoint
-
-	// Get all domains
-	domains, err := p.client.GetDomains(ctx)
+	zoneFQDNs, err := p.listZoneFQDNs(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Debug("Found domains", "count", len(domains))
+	slog.Debug("Found zones", "count", len(zoneFQDNs))
 
-	// For each domain, get zones and records
-	for _, domain := range domains {
-		// Apply domain filter if specified
-		if p.domainFilter != nil && !p.domainFilter.Match(domain.Name) {
-			slog.Debug("Skipping domain", "name", domain.Name)
-			continue
-		}
-
-		// Get zones for this domain
-		zones, err := p.client.GetDomainZones(ctx, domain.Name)
+	var endpoints []*endpoint.Endpoint
+	for _, fqdn := range zoneFQDNs {
+		records, err := p.client.GetRecords(ctx, fqdn)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, zone := range zones {
-			// Get records for this zone
-			records, err := p.client.GetRecords(ctx, zone.FQDN)
-			if err != nil {
-				return nil, err
-			}
+		slog.Debug(fmt.Sprintf("Found %d records for zone %s", len(records), fqdn))
 
-			slog.Debug(fmt.Sprintf("Found %d records for zone %s", len(records), zone.FQDN))
-
-			endpoints = append(endpoints, mergeRecords(records, zone.FQDN)...)
-		}
+		endpoints = append(endpoints, mergeRecords(records, fqdn)...)
 	}
 
 	return endpoints, nil
@@ -81,16 +63,21 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 
 	slog.Info("Requesting apply changes", "create", len(changes.Create), "update_old", len(changes.UpdateOld), "update_new", len(changes.UpdateNew), "delete", len(changes.Delete))
 
+	zoneFQDNs, err := p.listZoneFQDNs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list zones: %w", err)
+	}
+
 	// Process deletions first
 	for _, ep := range changes.Delete {
-		if err := p.deleteRecord(ctx, ep); err != nil {
+		if err := p.deleteRecord(ctx, ep, zoneFQDNs); err != nil {
 			return err
 		}
 	}
 
 	// Process creations
 	for _, ep := range changes.Create {
-		if err := p.createRecord(ctx, ep); err != nil {
+		if err := p.createRecord(ctx, ep, zoneFQDNs); err != nil {
 			return err
 		}
 	}
@@ -98,7 +85,7 @@ func (p *Provider) ApplyChanges(ctx context.Context, changes *plan.Changes) erro
 	// Process updates
 	for i, oldEp := range changes.UpdateOld {
 		if i < len(changes.UpdateNew) {
-			if err := p.updateRecord(ctx, oldEp, changes.UpdateNew[i]); err != nil {
+			if err := p.updateRecord(ctx, oldEp, changes.UpdateNew[i], zoneFQDNs); err != nil {
 				return err
 			}
 		}
@@ -237,31 +224,45 @@ func extractRecordSource(dnsName, zoneFQDN string) string {
 	return dnsName
 }
 
-// findZoneForEndpoint finds the zone FQDN that matches the given endpoint
-func (p *Provider) findZoneForEndpoint(ctx context.Context, ep *endpoint.Endpoint) (string, error) {
+// listZoneFQDNs returns the FQDNs of all zones visible to the provider, respecting the domain filter.
+func (p *Provider) listZoneFQDNs(ctx context.Context) ([]string, error) {
 	domains, err := p.client.GetDomains(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	var bestMatch string
+	var fqdns []string
 	for _, domain := range domains {
+		if p.domainFilter != nil && !p.domainFilter.Match(domain.Name) {
+			continue
+		}
+
 		zones, err := p.client.GetDomainZones(ctx, domain.Name)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
 		for _, zone := range zones {
-			if ep.DNSName == zone.FQDN || strings.HasSuffix(ep.DNSName, "."+zone.FQDN) {
-				if len(zone.FQDN) > len(bestMatch) {
-					bestMatch = zone.FQDN
-				}
+			fqdns = append(fqdns, zone.FQDN)
+		}
+	}
+
+	return fqdns, nil
+}
+
+// lookupZone returns the most specific zone FQDN that contains dnsName.
+func lookupZone(dnsName string, zoneFQDNs []string) (string, error) {
+	var bestMatch string
+	for _, fqdn := range zoneFQDNs {
+		if dnsName == fqdn || strings.HasSuffix(dnsName, "."+fqdn) {
+			if len(fqdn) > len(bestMatch) {
+				bestMatch = fqdn
 			}
 		}
 	}
 
 	if bestMatch == "" {
-		return "", fmt.Errorf("no matching zone found for endpoint %s", ep.DNSName)
+		return "", fmt.Errorf("no matching zone found for endpoint %s", dnsName)
 	}
 
 	return bestMatch, nil
@@ -286,8 +287,8 @@ func (p *Provider) findRecords(ctx context.Context, zoneFQDN, source, recordType
 }
 
 // createRecord creates a new DNS record.
-func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) error {
-	zoneFQDN, err := p.findZoneForEndpoint(ctx, ep)
+func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint, zoneFQDNs []string) error {
+	zoneFQDN, err := lookupZone(ep.DNSName, zoneFQDNs)
 	if err != nil {
 		return fmt.Errorf("failed to find zone: %w", err)
 	}
@@ -320,8 +321,8 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint) erro
 // updated in place. Deletions are derived from oldEp — the set ExternalDNS
 // previously owned — never from the live records. Live records are read only to
 // resolve a target to its row ID and to avoid recreating one that already exists.
-func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endpoint) error {
-	zoneFQDN, err := p.findZoneForEndpoint(ctx, oldEp)
+func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endpoint, zoneFQDNs []string) error {
+	zoneFQDN, err := lookupZone(oldEp.DNSName, zoneFQDNs)
 	if err != nil {
 		return fmt.Errorf("failed to find zone: %w", err)
 	}
@@ -398,8 +399,8 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 
 // deleteRecord deletes a DNS record. Every Infomaniak row for the endpoint's
 // (source, type) is removed, so multi-target records are deleted in full.
-func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint) error {
-	zoneFQDN, err := p.findZoneForEndpoint(ctx, ep)
+func (p *Provider) deleteRecord(ctx context.Context, ep *endpoint.Endpoint, zoneFQDNs []string) error {
+	zoneFQDN, err := lookupZone(ep.DNSName, zoneFQDNs)
 	if err != nil {
 		return fmt.Errorf("failed to find zone: %w", err)
 	}

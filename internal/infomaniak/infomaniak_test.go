@@ -351,36 +351,19 @@ func TestProviderAdjustEndpoints(t *testing.T) {
 	assert.Equal(t, endpoint.TTL(minTTL), result[3].RecordTTL)
 }
 
-func TestProviderMostSpecificZone(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/2/domains/domains" && r.Method == "GET":
-			response := DomainListResponse{
-				Result: "success",
-				Data:   []InfomaniakDomain{{Name: "test.fr"}},
-			}
-			require.NoError(t, json.NewEncoder(w).Encode(response))
-		case r.URL.Path == "/2/domains/domains/test.fr/zones" && r.Method == "GET":
-			response := ZoneListResponse{
-				Result: "success",
-				Data:   []InfomaniakZone{{FQDN: "test.fr"}, {FQDN: "sub.test.fr"}},
-			}
-			require.NoError(t, json.NewEncoder(w).Encode(response))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
+func TestLookupZone(t *testing.T) {
+	zones := []string{"test.fr", "sub.test.fr"}
 
-	config := &Config{APIToken: "test-token", DryRun: false}
-	client := NewInfomaniakClient(config)
-	client.baseURL = server.URL
-	provider := &Provider{client: client, dryRun: false, domainFilter: nil}
-
-	zone, err := provider.findZoneForEndpoint(context.Background(), endpoint.NewEndpoint("v1.sub.test.fr", "A", "1.2.3.4"))
+	zone, err := lookupZone("v1.sub.test.fr", zones)
 	require.NoError(t, err)
 	assert.Equal(t, "sub.test.fr", zone, "should select the most specific zone")
+
+	zone, err = lookupZone("test.fr", zones)
+	require.NoError(t, err)
+	assert.Equal(t, "test.fr", zone, "should match exact zone")
+
+	_, err = lookupZone("other.example.com", zones)
+	assert.Error(t, err)
 }
 
 func TestProviderDeleteRecordMultiZone(t *testing.T) {
