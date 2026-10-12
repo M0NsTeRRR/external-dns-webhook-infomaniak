@@ -67,6 +67,10 @@ sources:
 # -- How DNS records are synchronized between sources and providers; available values are create-only, sync, & upsert-only.
 policy: "sync"
 
+# -- Infomaniak does not support TTL values below 60s.
+extraArgs:
+  - --min-ttl=60s
+
 provider:
   name: webhook
   webhook:
