@@ -413,6 +413,12 @@ func TestProviderDeleteRecordMultiZone(t *testing.T) {
 	assert.True(t, deletedRecord, "expected DELETE request to sub.test.fr zone")
 }
 
+func TestEffectiveTTL(t *testing.T) {
+	assert.Equal(t, minTTL, effectiveTTL(0), "registry TXT records carry no TTL")
+	assert.Equal(t, minTTL, effectiveTTL(30))
+	assert.Equal(t, 300, effectiveTTL(300))
+}
+
 func TestHelperFunctions(t *testing.T) {
 	t.Run("recordToEndpoint", func(t *testing.T) {
 		record := InfomaniakRecord{Source: "www", Type: "A", Target: "192.0.2.1", TTL: 3600}

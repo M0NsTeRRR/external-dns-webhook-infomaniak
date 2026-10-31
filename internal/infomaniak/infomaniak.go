@@ -104,7 +104,7 @@ func (p *Provider) AdjustEndpoints(endpoints []*endpoint.Endpoint) ([]*endpoint.
 		// Infomaniak enforces a minimum TTL of 60 seconds, so any lower value is raised here.
 		if ep.RecordTTL < minTTL {
 			slog.Warn(fmt.Sprintf("TTL %d for %s is below Infomaniak minimum (%d), raising to %d", ep.RecordTTL, ep.DNSName, minTTL, minTTL))
-			ep.RecordTTL = minTTL
+			ep.RecordTTL = endpoint.TTL(effectiveTTL(int(ep.RecordTTL)))
 		}
 	}
 	return endpoints, nil
@@ -142,7 +142,7 @@ func mergeRecords(records []InfomaniakRecord, zoneFQDN string) []*endpoint.Endpo
 func recordToEndpoint(r InfomaniakRecord, zoneFQDN string) *endpoint.Endpoint {
 	dnsName := ensureFQDN(r.Source, zoneFQDN)
 	// Normalize TTL to match what we send to the API
-	ttl := max(r.TTL, minTTL)
+	ttl := effectiveTTL(r.TTL)
 	target := normalizeReadTarget(r.Type, r.Target)
 
 	return endpoint.NewEndpointWithTTL(dnsName, r.Type, endpoint.TTL(ttl), target)
@@ -198,6 +198,14 @@ func unquoteTXT(target string) string {
 	}
 
 	return b.String()
+}
+
+// effectiveTTL returns the TTL Infomaniak accepts: never below minTTL. It is the
+// single place this rule lives, used when adjusting source endpoints, when
+// reading records back, and on every write (the TXT registry records ExternalDNS
+// adds after AdjustEndpoints carry no TTL, which the API rejects).
+func effectiveTTL(ttl int) int {
+	return max(ttl, minTTL)
 }
 
 // ensureFQDN ensures the record name is a fully qualified domain name.
@@ -300,7 +308,7 @@ func (p *Provider) createRecord(ctx context.Context, ep *endpoint.Endpoint, zone
 			Source: source,
 			Type:   ep.RecordType,
 			Target: target,
-			TTL:    int(ep.RecordTTL),
+			TTL:    effectiveTTL(int(ep.RecordTTL)),
 		}
 
 		_, err := p.client.CreateRecord(ctx, zoneFQDN, record)
@@ -371,7 +379,7 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 			Source: source,
 			Type:   newEp.RecordType,
 			Target: target,
-			TTL:    int(newEp.RecordTTL),
+			TTL:    effectiveTTL(int(newEp.RecordTTL)),
 		}
 
 		row, ok := existing[target]
@@ -384,12 +392,12 @@ func (p *Provider) updateRecord(ctx context.Context, oldEp, newEp *endpoint.Endp
 			continue
 		}
 
-		if row.TTL != int(newEp.RecordTTL) {
+		if row.TTL != effectiveTTL(int(newEp.RecordTTL)) {
 			if _, err := p.client.UpdateRecord(ctx, zoneFQDN, row.ID, record); err != nil {
 				return err
 			}
 
-			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", newEp.RecordTTL)
+			slog.Info("Updated record (TTL changed)", "source", source, "record_type", newEp.RecordType, "target", target, "ttl", effectiveTTL(int(newEp.RecordTTL)))
 		}
 
 	}
