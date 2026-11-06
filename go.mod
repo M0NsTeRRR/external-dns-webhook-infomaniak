@@ -3,7 +3,7 @@ module github.com/m0nsterrr/external-dns-webhook-infomaniak
 go 1.26.6
 
 require (
-	github.com/caarlos0/env/v11 v11.4.1
+	github.com/caarlos0/env/v11 v11.4.2
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/stretchr/testify v1.12.1
